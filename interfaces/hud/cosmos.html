@@ -1,0 +1,1031 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emma — Living Core</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --teal: #2dd4a8;
+    --cyan: #22d3ee;
+    --amber: #ffb020;
+    --red: #ff3b3b;
+    --ink: #e8fffb;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #02040a; }
+  body { font-family: 'Inter', system-ui, sans-serif; color: var(--ink); }
+
+  /* Three stacked full-screen layers: background / orb / labels */
+  #bg-canvas, #orb-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+  #bg-canvas { z-index: 1; opacity: 0; transition: opacity 1.5s ease; }
+  #bg-canvas.fade-in { opacity: 1; }
+  #orb-canvas { z-index: 2; pointer-events: none; }
+  #label-layer { position: fixed; inset: 0; z-index: 3; pointer-events: none; }
+
+  /* vignette — subtle darkening toward the corners so the eye stays centered */
+  #vignette { position: fixed; inset: 0; z-index: 4; pointer-events: none;
+    background: radial-gradient(ellipse at 50% 46%, transparent 46%, rgba(1,3,8,0.55) 100%); }
+
+  /* header */
+  #hud-head { position: fixed; top: 0; left: 0; right: 0; z-index: 10;
+    display: flex; align-items: flex-start; justify-content: space-between;
+    padding: 18px 22px; pointer-events: none;
+    font-family: 'Orbitron', monospace; }
+  #hud-head .brand { letter-spacing: 0.35em; font-weight: 800; font-size: 15px; color: var(--ink);
+    text-shadow: 0 0 14px rgba(45,212,168,0.65); }
+  #hud-head .brand small { display: block; margin-top: 4px; font-size: 8.5px; font-weight: 400;
+    letter-spacing: 0.28em; color: rgba(232,255,251,0.5); text-shadow: none; }
+  #state-chip { display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(6,14,24,0.55); border: 1px solid rgba(45,212,168,0.35);
+    border-radius: 999px; padding: 7px 14px; font-size: 10px; letter-spacing: 0.3em;
+    color: rgba(232,255,251,0.85); backdrop-filter: blur(6px); }
+  #state-chip .dot { width: 8px; height: 8px; border-radius: 50%;
+    background: var(--teal); box-shadow: 0 0 10px currentColor; transition: background 0.6s; }
+
+  /* controls (bottom) — the only interactive chrome */
+  #hud-ctrl { position: fixed; bottom: 16px; right: 18px; z-index: 10;
+    display: flex; gap: 8px; }
+  #hud-ctrl button { font-family: 'Orbitron', monospace; font-size: 9px; letter-spacing: 0.22em;
+    color: rgba(232,255,251,0.85); background: rgba(6,14,24,0.55);
+    border: 1px solid rgba(45,212,168,0.4); border-radius: 6px; padding: 8px 12px;
+    cursor: pointer; transition: all 0.25s; }
+  #hud-ctrl button:hover { border-color: var(--teal); box-shadow: 0 0 12px rgba(45,212,168,0.45);
+    color: #fff; }
+  #hud-ctrl button.on { background: rgba(45,212,168,0.22); border-color: var(--teal); }
+  #hud-ctrl .hint { font-family: 'Inter', sans-serif; letter-spacing: 0.05em; font-size: 9px;
+    color: rgba(232,255,251,0.4); align-self: center; margin-right: 4px; pointer-events: none; }
+
+  #link-chip { position: fixed; bottom: 16px; left: 18px; z-index: 10;
+    font-family: 'Orbitron', monospace; font-size: 8.5px; letter-spacing: 0.25em;
+    color: rgba(232,255,251,0.45); pointer-events: none; }
+  #link-chip b { color: rgba(45,212,168,0.9); font-weight: 600; }
+
+  /* constellation labels — plain HTML in the front layer, follow their avatars */
+  .cosmos-label { position: absolute; transform: translate(-50%, 10px);
+    text-align: center; opacity: 0; transition: opacity 0.5s ease;
+    pointer-events: auto; cursor: default; user-select: none; }
+  .cosmos-label.ready { opacity: 1; }
+  .cosmos-label .nm { font-family: 'Orbitron', monospace; font-size: 10px; letter-spacing: 0.18em;
+    color: #eafffb; text-shadow: 0 0 8px currentColor; white-space: nowrap; }
+  .cosmos-label .sp { font-size: 8.5px; letter-spacing: 0.06em; color: rgba(234,255,251,0.55);
+    white-space: nowrap; margin-top: 1px; }
+  .cosmos-label:hover .nm { text-decoration: underline; text-underline-offset: 2px; }
+
+  /* fatal fallback if WebGL/CDN is unavailable */
+  #fatal { position: fixed; inset: 0; z-index: 99; display: none; align-items: center; justify-content: center;
+    background: #02040a; font-family: 'Orbitron', monospace; font-size: 13px; letter-spacing: 0.15em;
+    color: rgba(232,255,251,0.8); text-align: center; padding: 40px; line-height: 2; }
+  /* hide the constellation labels on small mobile screens */
+  @media (max-width: 560px) { .cosmos-label { display: none; } }
+  @media (max-width: 640px) {
+    #hud-head { padding: 12px 14px; }
+    #state-chip { font-size: 8px; padding: 5px 9px; }
+    #hud-ctrl .hint, #link-chip { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<canvas id="bg-canvas"></canvas>   <!-- background layer: sky + distant web -->
+<canvas id="orb-canvas"></canvas>  <!-- orb layer: orb, halo, rings, constellation -->
+<div id="vignette"></div>
+<div id="label-layer"></div>       <!-- front layer: text labels -->
+
+<div id="hud-head">
+  <div class="brand">EMMA<small>SELF-IMPROVING · AUTONOMOUS ASSISTANT</small></div>
+  <div id="state-chip"><span class="dot" id="state-dot"></span><span id="state-name">IDLE</span></div>
+</div>
+
+<div id="hud-ctrl">
+  <span class="hint">LIVE = real backend · DEMO = state cycle</span>
+  <button id="btn-demo" title="Toggle demo mode (LIVE = real backend)">LIVE</button>
+  <button id="btn-perf" title="Halve background cost">PERF</button>
+</div>
+<div id="link-chip"><b>LINK</b> · CONNECTING</div>
+
+<div id="fatal">This scene needs WebGL and three.js (CDN).<br>Check your connection and reload.</div>
+
+<!-- three.js UMD from CDN, with a second CDN fallback -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.149.0/build/three.min.js"></script>
+<script>window.THREE || document.write('<script src="https://unpkg.com/three@0.149.0/build/three.min.js"><\/script>');</script>
+
+<script>
+"use strict";
+/* ============================================================================
+   EMMA — LIVING COSMIC CORE
+   Six tiers, three stacked layers, one easing rhythm. Nothing ever snaps.
+   T1 orb · T2 cosmic background · T3 states + voice · T4 constellation ·
+   T5 reactions · T6 wiring / performance / accessibility
+   ========================================================================== */
+
+if (!window.THREE) {
+  document.getElementById("fatal").style.display = "flex";
+  throw new Error("three.js failed to load from both CDNs");
+}
+
+/* ------------------------------------------------------------------ utils */
+const clamp = (v, a, b) => v < a ? a : v > b ? b : v;
+const lerp  = (a, b, t) => a + (b - a) * t;
+/* frame-rate independent exponential approach — the one easing everywhere */
+function settle(cur, target, k, dt) { return cur + (target - cur) * (1 - Math.exp(-k * dt)); }
+const rand = (a, b) => a + Math.random() * (b - a);
+
+const isMobile = matchMedia("(max-width: 768px), (pointer: coarse)").matches;
+const prefersReduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+const FOV = 55, ORB_R = 1.4, CAM_Z = 9.4;
+/* keep the orbit band inside the viewport on short/narrow windows */
+const BAND = clamp(innerHeight / 760, 0.72, 1.15);
+
+/* ------------------------------------------------------------- orb colours */
+const COL = {
+  teal:  new THREE.Color(0x2dd4a8),
+  cyan:  new THREE.Color(0x22d3ee),
+  amber: new THREE.Color(0xffb020),
+  red:   new THREE.Color(0xff3b3b),
+  purple:new THREE.Color(0x9f7bff),
+};
+
+/* ============================================================== LAYER: BG */
+/* Tier 2 — the sky: nebula clouds, two star fields, orb-tinted glow pool,
+   plus the distant network (clustered nodes, connecting lines, dust).
+   Rendered by its own renderer so it can drop to half res / half rate. */
+const Bg = (() => {
+  const canvas = document.getElementById("bg-canvas");
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: false });
+  renderer.setClearColor(0x02040a, 1);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(60, innerWidth / innerHeight, 0.1, 200);
+  camera.position.set(0, 0, 30);
+
+  /* --- nebula clouds: big soft additive sprites drifting on their own --- */
+  const nebulaTex = (c1, c2) => {
+    const c = document.createElement("canvas"); c.width = c.height = 256;
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grad.addColorStop(0, c1); grad.addColorStop(0.55, c2); grad.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+    return new THREE.CanvasTexture(c);
+  };
+  const clouds = [];
+  const cloudSpec = [
+    { c1: "rgba(45,212,168,0.34)", c2: "rgba(45,212,168,0.07)", x: -14, y: 4,  s: 30, vx: 0.10, vy: 0.045, r: 0.012 },
+    { c1: "rgba(34,211,238,0.30)", c2: "rgba(34,211,238,0.06)", x: 13,  y: -5, s: 26, vx: -0.07, vy: 0.06,  r: -0.014 },
+    { c1: "rgba(159,123,255,0.28)",c2: "rgba(159,123,255,0.05)",x: -6,  y: -11,s: 24, vx: 0.05, vy: -0.03, r: 0.008 },
+    { c1: "rgba(255,64,140,0.20)", c2: "rgba(255,64,140,0.04)", x: 8,   y: 10, s: 20, vx: -0.04, vy: -0.05, r: 0.010 },
+  ];
+  for (const s of cloudSpec) {
+    const m = new THREE.SpriteMaterial({ map: nebulaTex(s.c1, s.c2), transparent: true,
+      blending: THREE.AdditiveBlending, depthWrite: false });
+    const sp = new THREE.Sprite(m);
+    sp.position.set(s.x, s.y, -18); sp.scale.set(s.s, s.s, 1);
+    scene.add(sp);
+    clouds.push({ sp, vx: s.vx, vy: s.vy, r: s.r });
+  }
+
+  /* --- stars: two layers, dense/fine + sparse/larger, twinkling --- */
+  function starField(count, size, spread) {
+    const pos = new Float32Array(count * 3);
+    for (let i = 0; i < count; i++) {
+      pos[i*3]   = rand(-spread, spread);
+      pos[i*3+1] = rand(-spread, spread);
+      pos[i*3+2] = rand(-40, -8);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    const m = new THREE.PointsMaterial({ color: 0xcfeefb, size, transparent: true,
+      opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false, sizeAttenuation: true });
+    return { points: new THREE.Points(g, m), m, phase: rand(0, 6.28), speed: rand(0.5, 1.2) };
+  }
+  const starsFine = starField(isMobile ? 400 : 900, 0.11, 60);
+  const starsBold = starField(isMobile ? 90 : 200, 0.22, 60);
+  scene.add(starsFine.points, starsBold.points);
+
+  /* --- glow pooled behind the orb, tinted by the orb's live color --- */
+  const glowTex = (() => {
+    const c = document.createElement("canvas"); c.width = c.height = 256;
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grad.addColorStop(0, "rgba(255,255,255,0.85)");
+    grad.addColorStop(0.4, "rgba(255,255,255,0.28)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+    return new THREE.CanvasTexture(c);
+  })();
+  const pool = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, color: 0x2dd4a8, opacity: 0.5 }));
+  pool.scale.set(9, 9, 1); pool.position.z = -12;
+  scene.add(pool);
+
+  /* --- the distant network: ~8 clusters of glowing nodes + close-pair lines + dust --- */
+  const web = new THREE.Group();
+  const webColors = [0x2dd4a8, 0x22d3ee, 0x9f7bff, 0x5eead4, 0x60a5fa, 0xf472b6, 0x34d399, 0x818cf8];
+  const nPerCluster = isMobile ? 6 : 12;             // ~100 nodes desktop
+  const nodes = [], pairs = [];
+  const r0 = 12, depth0 = -24;
+  for (let ci = 0; ci < 8; ci++) {
+    const cx = rand(-r0, r0), cy = rand(-r0, r0), cz = rand(-10, -6) + depth0;
+    const col = webColors[ci];
+    for (let i = 0; i < nPerCluster; i++) {
+      const x = cx + rand(-2.6, 2.6), y = cy + rand(-2.6, 2.6), z = cz + rand(-2.2, 2.2);
+      nodes.push({ x, y, z, col, phase: rand(0, 6.28) });
+    }
+  }
+  /* lines between any two nodes closer than ~1.6 within the web */
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+    const a = nodes[i], b = nodes[j];
+    const d = (a.x-b.x)**2 + (a.y-b.y)**2 + (a.z-b.z)**2;
+    if (d < 2.7) pairs.push(a, b);
+  }
+  {
+    const pos = new Float32Array(nodes.length * 3);
+    const col = new Float32Array(nodes.length * 3);
+    nodes.forEach((n, i) => { pos.set([n.x, n.y, n.z], i*3); col.set([n.col>>16&255, n.col>>8&255, n.col&255].map(v => v/255), i*3); });
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+    const m = new THREE.PointsMaterial({ size: 0.09, vertexColors: true, transparent: true,
+      opacity: 0.8, blending: THREE.AdditiveBlending, depthWrite: false });
+    web.add(new THREE.Points(g, m));
+  }
+  if (pairs.length) {
+    const pos = new Float32Array(pairs.length * 3);
+    pairs.forEach((p, i) => pos.set([p.x, p.y, p.z], i*3));
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    const m = new THREE.LineBasicMaterial({ color: 0x4aa8c0, transparent: true, opacity: 0.16 });
+    web.add(new THREE.LineSegments(g, m));
+  }
+  {
+    const dustCount = isMobile ? 140 : 300;
+    const pos = new Float32Array(dustCount * 3);
+    for (let i = 0; i < dustCount; i++) pos.set([rand(-30, 30), rand(-20, 20), rand(-55, -8)], i*3);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    const m = new THREE.PointsMaterial({ color: 0x9fd8e8, size: 0.045, transparent: true,
+      opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false });
+    web.add(new THREE.Points(g, m));
+  }
+  scene.add(web);
+
+  /* camera drift — very slow wander; calmed under reduced motion */
+  const drift = { x: 0, y: 0, t: rand(0, 6.28) };
+
+  requestAnimationFrame(() => canvas.classList.add("fade-in"));
+
+  return {
+    renderer, scene, camera, pool,
+    time: 0,
+    perf: isMobile,                      // mobile starts in performance mode
+    tick(dt, time, t) {
+      this.time += dt;
+      /* nebula drift */
+      for (const c of clouds) {
+        c.sp.position.x += c.vx * dt;
+        c.sp.position.y += c.vy * dt;
+        if (c.sp.position.x > 26) c.sp.position.x = -26;
+        if (c.sp.position.x < -26) c.sp.position.x = 26;
+        if (c.sp.position.y > 18) c.sp.position.y = -18;
+        if (c.sp.position.y < -18) c.sp.position.y = 18;
+        c.sp.rotation.z += c.r * dt;
+      }
+      /* twinkle */
+      starsFine.m.opacity = 0.55 + 0.35 * Math.sin(t * 0.9 + starsFine.phase);
+      starsBold.m.opacity = 0.5 + 0.4 * Math.sin(t * 0.55 + starsBold.phase);
+      /* distant web rotates slowly; nodes shimmer */
+      if (!prefersReduced) { web.rotation.y += dt * 0.02; web.rotation.x += dt * 0.006; }
+      /* camera wander */
+      if (!prefersReduced) {
+        drift.t += dt * 0.08;
+        camera.position.x = Math.sin(drift.t) * 0.7;
+        camera.position.y = Math.cos(drift.t * 0.8) * 0.45;
+      }
+      camera.lookAt(0, 0, 0);
+    },
+  };
+})();
+
+/* ============================================================== LAYER: ORB */
+/* Tier 1 (orb + halo) + Tier 4 (constellation) + Tier 5 (reactions). */
+const Orb = (() => {
+  const canvas = document.getElementById("orb-canvas");
+  const renderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+  renderer.setClearColor(0x000000, 0);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(FOV, innerWidth / innerHeight, 0.1, 100);
+  camera.position.set(0, 0, CAM_Z);
+
+  /* ---------------- Tier 1: the orb itself ---------------- */
+  const orbGeo = new THREE.IcosahedronGeometry(ORB_R, isMobile ? 4 : 5);
+  const orbMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uTime: { value: 0 }, uColor: { value: COL.teal.clone() },
+      uBright: { value: 0.35 }, uGlow: { value: 0.3 },
+      uChurn: { value: 0.5 }, uEnergy: { value: 0.0 }, uBreathe: { value: 1.0 },
+    },
+    vertexShader: `
+      uniform float uTime; uniform float uChurn; uniform float uEnergy; uniform float uBreathe;
+      varying vec3 vNormal; varying vec3 vView;
+      void main() {
+        vec3 p = position; float t = uTime;
+        float n1 = sin(p.x*2.1 + t*0.55) * cos(p.y*1.9 - t*0.45) * sin(p.z*2.3 + t*0.35);
+        float n2 = sin(p.x*4.3 - t*0.9) * sin(p.y*3.7 + t*0.8) * cos(p.z*4.1 - t*0.7);
+        float n3 = sin(p.x*7.3 + t*1.4) * cos(p.y*6.7 - t*1.1) * sin(p.z*6.1 + t*1.2);
+        float disp = (n1*0.38 + n2*0.22 + n3*0.13);
+        float amp = 0.045 + uEnergy*0.11 + uBreathe*0.02*sin(t*0.9);
+        float d = disp * amp * (0.35 + uChurn*0.65);
+        vec3 np = p + normal * d;
+        vNormal = normalMatrix * normal;
+        vec4 mv = modelViewMatrix * vec4(np, 1.0);
+        vView = -mv.xyz;
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: `
+      uniform vec3 uColor; uniform float uBright; uniform float uGlow;
+      varying vec3 vNormal; varying vec3 vView;
+      void main() {
+        vec3 n = normalize(vNormal);
+        vec3 v = normalize(vView);
+        float f = pow(1.0 - abs(dot(n, v)), 2.4);
+        vec3 col = uColor * (0.10 + f * uBright);
+        float a = 0.12 + f * (0.55 + uGlow);
+        gl_FragColor = vec4(col * 1.8, a);
+      }`,
+    transparent: true, wireframe: true, blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const orb = new THREE.Mesh(orbGeo, orbMat);
+  scene.add(orb);
+
+  /* soft halo — a large billboarded glow behind the orb, eased with the mood */
+  const haloTex = (() => {
+    const c = document.createElement("canvas"); c.width = c.height = 256;
+    const g = c.getContext("2d");
+    const grad = g.createRadialGradient(128, 128, 0, 128, 128, 128);
+    grad.addColorStop(0, "rgba(255,255,255,0.9)");
+    grad.addColorStop(0.35, "rgba(255,255,255,0.32)");
+    grad.addColorStop(1, "rgba(255,255,255,0)");
+    g.fillStyle = grad; g.fillRect(0, 0, 256, 256);
+    return new THREE.CanvasTexture(c);
+  })();
+  const halo = new THREE.Sprite(new THREE.SpriteMaterial({ map: haloTex, transparent: true,
+    blending: THREE.AdditiveBlending, depthWrite: false, color: 0x2dd4a8, opacity: 0.5 }));
+  halo.scale.set(5.4, 5.4, 1);
+  scene.add(halo);
+
+  /* ---------------- Tier 5: helix rings (processing) ---------------- */
+  const ringMat = new THREE.ShaderMaterial({
+    uniforms: { uTime: { value: 0 }, uColor: { value: COL.teal.clone() }, uSpeed: { value: 1 }, uOpacity: { value: 0 } },
+    vertexShader: `
+      varying float vAngle;
+      void main() { vAngle = atan(position.y, position.x);
+        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+    fragmentShader: `
+      uniform float uTime; uniform vec3 uColor; uniform float uSpeed; uniform float uOpacity;
+      varying float vAngle;
+      void main() {
+        float pulses = 0.0;
+        for (int i = 0; i < 3; i++) {
+          float ph = float(i) * 2.094;
+          pulses += pow(max(0.0, sin(vAngle*3.0 - uTime*uSpeed + ph)), 12.0);
+        }
+        float base = 0.22 + 0.10*sin(vAngle*2.0 + uTime*uSpeed*0.5);
+        vec3 col = uColor * (base + pulses*2.2);
+        gl_FragColor = vec4(col, uOpacity * (0.35 + pulses));
+      }`,
+    transparent: true, blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide,
+  });
+  const rings = [];
+  for (let i = 0; i < 3; i++) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(2.15, 2.2, 96), ringMat);
+    ring.rotation.x = rand(0.5, 1.2) * (i % 2 ? 1 : -1);
+    ring.rotation.y = rand(0.2, 0.8);
+    ring.rotation.z = i * 2.09;
+    ring.visible = false;
+    scene.add(ring);
+    rings.push({ mesh: ring, speed: rand(0.8, 1.4) * (i % 2 ? 1 : -1), tilt: ring.rotation.x });
+  }
+
+  /* ---------------- Tier 4: the constellation ---------------- */
+  const constellation = new THREE.Group();
+  scene.add(constellation);
+
+  const agentDefs = [
+    { id: "reasoning",  name: "REASONING",  specialty: "plans multi-step tasks with tools", color: 0x60a5fa, dist: 2.95, speed: 0.16, start: 0.0,  tilt: 0.5 },
+    { id: "control",    name: "CONTROL",    specialty: "files · shell · web · git · docker", color: 0x22d3ee, dist: 3.3,  speed: 0.11, start: 1.1,  tilt: -0.45 },
+    { id: "memory",     name: "MEMORY",     specialty: "stores and recalls episodes",        color: 0xa78bfa, dist: 2.7,  speed: 0.2,  start: 2.2,  tilt: 0.42 },
+    { id: "security",   name: "GUARDIAN",   specialty: "kill switch · consent · gate",       color: 0xfb7185, dist: 3.15, speed: 0.14, start: 3.3,  tilt: -0.55 },
+    { id: "map",        name: "MAP",        specialty: "regions · geography · flights",      color: 0xfb923c, dist: 3.45, speed: 0.09, start: 4.4,  tilt: 0.38 },
+    { id: "self_improve", name: "SELF-IMPROVE", specialty: "reviews and rewrites her own code", color: 0x34d399, dist: 2.8,  speed: 0.18, start: 5.5, tilt: -0.42 },
+  ];
+
+  function makeAvatar(def) {
+    const size = 128;
+    const c = document.createElement("canvas"); c.width = c.height = size;
+    const g = c.getContext("2d");
+    const col = "#" + def.color.toString(16).padStart(6, "0");
+    const grad = g.createRadialGradient(64, 64, 6, 64, 64, 64);
+    grad.addColorStop(0, col + "ff");
+    grad.addColorStop(0.42, col + "55");
+    grad.addColorStop(1, col + "00");
+    g.fillStyle = grad; g.fillRect(0, 0, size, size);
+    g.strokeStyle = "rgba(255,255,255,0.85)"; g.lineWidth = 2.5;
+    g.beginPath(); g.arc(64, 64, 56, 0, 6.2832); g.stroke();
+    g.fillStyle = "rgba(2,8,16,0.72)";
+    g.beginPath(); g.arc(64, 64, 30, 0, 6.2832); g.fill();
+    g.fillStyle = "#eafffb"; g.font = "800 44px Orbitron, 'Segoe UI', sans-serif";
+    g.textAlign = "center"; g.textBaseline = "middle";
+    g.fillText(def.name[0], 64, 66);
+    return new THREE.CanvasTexture(c);
+  }
+
+  const agents = agentDefs.map((def) => {
+    const pivot = new THREE.Object3D();
+    pivot.rotation.x = def.tilt;
+    pivot.rotation.z = (def.tilt > 0 ? 1 : -1) * rand(0.06, 0.16);
+    constellation.add(pivot);
+
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: makeAvatar(def), transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, color: 0xffffff, opacity: 0.9 }));
+    sprite.scale.setScalar(0.42);
+    pivot.add(sprite);
+
+    const pos = new THREE.Vector3(Math.cos(def.start) * def.dist * BAND, 0, Math.sin(def.start) * def.dist * BAND);
+    sprite.position.copy(pos);
+
+    const working = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: haloTex, transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, color: def.color, opacity: 0 }));
+    working.scale.setScalar(0.85);
+    pivot.add(working);
+
+    const label = document.createElement("div");
+    label.className = "cosmos-label";
+    label.innerHTML = `<div class="nm" style="color:${"#" + def.color.toString(16).padStart(6, "0")}">${def.name}</div><div class="sp">${def.specialty}</div>`;
+    document.getElementById("label-layer").appendChild(label);
+
+    return {
+      def, pivot, sprite, working,
+      angle: def.start,
+      worldPos: new THREE.Vector3(),
+      label, labelReady: false,
+      flare: 0,             // dispatch flare 0..1
+      isWorking: false,
+      dock: null,           // {el} while docked, else null
+      breathePhase: rand(0, 6.28),
+    };
+  });
+
+  /* ---------------- Tier 5: beams, sonar pings, travelers ---------------- */
+  const beams = [];
+  function spawnBeam(agent) {
+    const a = agent.worldPos.clone();
+    const dir = a.clone().normalize();
+    const start = dir.clone().multiplyScalar(ORB_R * 1.25);
+    const mid = dir.clone().multiplyScalar(a.length() * 0.55).add(
+      new THREE.Vector3(rand(-0.3, 0.3), rand(-0.3, 0.3), rand(-0.3, 0.3)));
+    const curve = new THREE.QuadraticBezierCurve3(start, mid, a);
+    const tube = new THREE.Mesh(
+      new THREE.TubeGeometry(curve, 24, 0.028, 6, false),
+      new THREE.MeshBasicMaterial({ color: agent.def.color, transparent: true,
+        opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false }));
+    scene.add(tube);
+    const traveler = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: haloTex, transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, color: agent.def.color, opacity: 0 }));
+    traveler.scale.setScalar(0.16);
+    scene.add(traveler);
+    beams.push({ tube, traveler, curve, t: 0, agent });
+  }
+  const pings = [];
+  function spawnPing(pos, color, maxScale) {
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.92, 1.0, 48),
+      new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.85,
+        blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide }));
+    ring.position.copy(pos);
+    ring.lookAt(camera.position);
+    scene.add(ring);
+    pings.push({ ring, t: 0, maxScale });
+  }
+  /* tether line for docked agents */
+  const tether = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]),
+    new THREE.LineBasicMaterial({ color: 0x2dd4a8, transparent: true, opacity: 0.25 }));
+  tether.visible = false;
+  scene.add(tether);
+
+  return { renderer, scene, camera, orb, orbMat, halo, haloMat: halo.material, ringMat,
+    rings, agents, constellation, beams, pings, spawnBeam, spawnPing, tether, time: 0 };
+})();
+
+/* ================================================================ AUDIO */
+/* Tier 3 — real mic analysis + synthetic fallback, auto-selected.
+   Asymmetric smoothing: loudness leaps up fast, decays slowly. */
+const AudioSys = (() => {
+  let ctx = null, analyser = null, micActive = false, micFailed = false;
+  let levels = { loudness: 0, bass: 0 };
+
+  /* create the AudioContext inside a real user gesture (iOS rule) */
+  function ensureCtx() {
+    if (ctx) return;
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = 256;
+      analyser.smoothingTimeConstant = 0.6;
+    } catch (e) { console.warn("cosmos: AudioContext unavailable — synthetic only", e); }
+  }
+
+  async function startMic() {
+    ensureCtx();
+    if (!ctx || micActive || micFailed) return;
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const src = ctx.createMediaStreamSource(stream);
+      src.connect(analyser);
+      micActive = true;
+      console.info("cosmos: real mic audio flowing — orb will react to it");
+    } catch (e) {
+      micFailed = true; /* no mic / permission denied → synthetic fallback */
+      console.info("cosmos: mic unavailable (" + (e && e.name) + ") — synthetic voice motion");
+    }
+  }
+
+  /* feed a *played* audio node into the analyser (iOS: silent duplicate pattern) */
+  function attachSource(node) {
+    ensureCtx();
+    if (ctx && node) node.connect(analyser);
+  }
+
+  const data = new Uint8Array(256);
+  function poll(dt) {
+    let loud = 0, bass = 0, real = false;
+    if (ctx && analyser && micActive) {
+      analyser.getByteFrequencyData(data);
+      let sum = 0;
+      for (let i = 0; i < 64; i++) sum += data[i];
+      loud = sum / (64 * 255);
+      bass = (data[1] + data[2] + data[3] + data[4]) / (4 * 255);
+      real = loud > 0.03;                      /* flowing audio → real signal */
+    }
+    if (!real) {
+      /* synthetic cadence: a gentle wavering that mimics speech.
+         Auto-selected whenever the mic is silent or unavailable. */
+      const t = performance.now() / 1000;
+      const amp = 0.28;
+      loud = amp * (0.5 + 0.5 * Math.sin(t * 2.3) * Math.sin(t * 4.1));
+      bass = amp * 0.5 * (0.5 + 0.5 * Math.sin(t * 1.7 + 1.3));
+    }
+    /* asymmetric: attack fast, decay slow */
+    levels.loudness = loud > levels.loudness
+      ? levels.loudness + (loud - levels.loudness) * (1 - Math.exp(-26 * dt))
+      : levels.loudness + (loud - levels.loudness) * (1 - Math.exp(-4.5 * dt));
+    levels.bass = bass > levels.bass
+      ? levels.bass + (bass - levels.bass) * (1 - Math.exp(-22 * dt))
+      : levels.bass + (bass - levels.bass) * (1 - Math.exp(-4 * dt));
+    return levels;
+  }
+
+  return { startMic, attachSource, poll, get levels() { return levels; } };
+})();
+
+/* ============================================================ STATE MOODS */
+/* Tier 3 — each state is a target the orb eases toward. Never a hard cut. */
+const State = (() => {
+  const moods = {
+    idle:       { color: COL.teal,  bright: 0.35, glow: 0.3,  churn: 0.5,  spin: 0.28, spinX: 0.07, halo: 0.42, energy: 0.0, rings: 0.0 },
+    listening:  { color: COL.amber, bright: 1.0,  glow: 0.85, churn: 0.75, spin: 0.5,  spinX: 0.12, halo: 0.95, energy: 0.3, rings: 0.0 },
+    processing: { color: COL.teal,  bright: 0.62, glow: 0.45, churn: 1.55, spin: 0.72, spinX: 0.2,  halo: 0.6,  energy: 0.12, rings: 1.0 },
+    speaking:   { color: COL.cyan,  bright: 1.0,  glow: 0.95, churn: 2.1,  spin: 0.95, spinX: 0.26, halo: 1.25, energy: 1.0, rings: 0.0 },
+    error:      { color: COL.red,   bright: 0.95, glow: 0.6,  churn: 0.18, spin: 0.05, spinX: 0.01, halo: 0.6,  energy: 0.0, rings: 0.0 },
+  };
+  const cur = {
+    color: COL.teal.clone(), bright: 0.35, glow: 0.3, churn: 0.5,
+    spin: 0.28, spinX: 0.07, halo: 0.42, rings: 0.0, energy: 0.0,
+    hueDrift: 0,           // processing: teal ⇄ purple cycle
+  };
+  let current = "idle";
+  const listeners = new Set();
+
+  const chip = document.getElementById("state-name");
+  const dot = document.getElementById("state-dot");
+
+  function set(name) {
+    if (!moods[name]) name = "idle";
+    current = name;
+    chip.textContent = name.toUpperCase();
+    dot.style.background = "#" + moods[name].color.getHexString();
+    dot.style.color = "#" + moods[name].color.getHexString();
+    listeners.forEach((fn) => fn(name));
+  }
+  function on(fn) { listeners.add(fn); }
+
+  function tick(dt) {
+    const m = moods[current];
+    cur.color.lerp(m.color, 1 - Math.exp(-2.6 * dt));
+    cur.bright = settle(cur.bright, m.bright, 2.6, dt);
+    cur.glow   = settle(cur.glow,   m.glow,   2.4, dt);
+    cur.churn  = settle(cur.churn,  m.churn,  2.8, dt);
+    cur.spin   = settle(cur.spin,   m.spin,   2.2, dt);
+    cur.spinX  = settle(cur.spinX,  m.spinX,  2.2, dt);
+    cur.halo   = settle(cur.halo,   m.halo,   2.4, dt);
+    cur.rings  = settle(cur.rings,  m.rings,  2.0, dt);
+    cur.energy = settle(cur.energy, m.energy, 2.4, dt);
+    if (current === "processing") cur.hueDrift += dt * 0.28;
+    else cur.hueDrift = settle(cur.hueDrift, 0, 1.5, dt);
+    /* processing: body color cycles teal ⇄ purple */
+    if (current === "processing") {
+      const k = (Math.sin(cur.hueDrift) + 1) / 2;
+      cur.color.lerpColors(COL.teal, COL.purple, k * 0.8);
+    }
+    return { name: current, ...cur };
+  }
+
+  return { moods, cur, set, on, tick, get current() { return current; } };
+})();
+
+/* ================================================================ DRIVERS */
+/* ============================================================ DEMO FALLBACK */
+/* Old hardcoded state cycle — only used when the backend is unreachable
+   or the operator explicitly toggles DEMO mode. */
+const Demo = (() => {
+  let on = false, timer = null;
+  const seq = [
+    ["idle", 2600], ["listening", 2300], ["processing", 3400], ["speaking", 2400], ["error", 1400],
+  ];
+  function cycle() {
+    if (!on) return;
+    let i = 0;
+    const step = () => {
+      const [st, ms] = seq[i % seq.length];
+      i++;
+      State.set(st);
+      if (st === "processing" && Math.random() < 0.7) {
+        const a = Orb.agents[Math.floor(Math.random() * Orb.agents.length)];
+        Cosmos.dispatchAgent(a.def.id);
+      }
+      timer = setTimeout(step, ms + Math.random() * 500);
+    };
+    step();
+  }
+  return {
+    start() { on = true; cycle(); },
+    stop() { on = false; clearTimeout(timer); },
+    get on() { return on; },
+  };
+})();
+
+/* =========================================================== BACKEND LINK */
+/* Polls Emma's audit log every 2s and maps real events to orb states
+   and agent dispatches. Replaces the Demo cycle when the backend is
+   reachable. Each event type maps to a state + optional visual effect. */
+const BackendLink = (() => {
+  let connected = false, lastTs = null, pollTimer = null;
+  const chip = document.getElementById("link-chip");
+  const stateChip = document.getElementById("state-chip");
+
+  /* event → state mapping (highest priority first) */
+  const STATE_RULES = [
+    { match: (e) => /error|failed|exception|timeout/.test(e.event),              state: "error",     ttl: 3000 },
+    { match: (e) => e.event === "chat.completed",                                 state: "speaking",  ttl: 2500 },
+    { match: (e) => /control\.executed|plan\.tool_denied|self_improve/.test(e.event), state: "processing", ttl: 2000 },
+    { match: (e) => e.event === "chat.incoming",                                  state: "listening", ttl: 3500 },
+  ];
+
+  /* event → agent dispatch mapping (beam + ping effects) */
+  const AGENT_MAP = [
+    { match: (e) => /map\.displayed|region/.test(e.event + " " + (e.action||"")),   id: "map" },
+    { match: (e) => /memory|episode/.test(e.event + " " + (e.action||"")),          id: "memory" },
+    { match: (e) => /guard|consent|kill|network|security/.test(e.event + " " + (e.action||"")), id: "security" },
+    { match: (e) => /self_improve/.test(e.event),                                   id: "self_improve" },
+    { match: (e) => e.actor && e.actor.includes("reasoning"),                       id: "reasoning" },
+    { match: (e) => e.actor && e.actor.includes("control"),                         id: "control" },
+  ];
+
+  let activeState = "idle";
+  let stateExpiry = 0;
+  let dispatchedRecently = new Set();
+  let dispatchCooldowns = new Map();
+
+  function classifyEvent(entry) {
+    const now = performance.now();
+    /* state */
+    for (const rule of STATE_RULES) {
+      if (rule.match(entry)) {
+        activeState = rule.state;
+        stateExpiry = now + rule.ttl;
+        break;
+      }
+    }
+    /* agent dispatch */
+    for (const rule of AGENT_MAP) {
+      if (rule.match(entry)) {
+        const lastDispatch = dispatchCooldowns.get(rule.id) || 0;
+        if (now - lastDispatch > 6000) {       /* 6s cooldown per agent */
+          dispatchCooldowns.set(rule.id, now);
+          Cosmos.dispatchAgent(rule.id);
+        }
+        break;
+      }
+    }
+  }
+
+  async function poll() {
+    if (Demo.on) { pollTimer = setTimeout(poll, 2500); return; }
+    try {
+      const r = await fetch("/api/system/activity?limit=8", { signal: AbortSignal.timeout(4000) });
+      if (!r.ok) throw new Error(r.status);
+      const entries = await r.json();
+      if (!connected) {
+        connected = true;
+        chip.innerHTML = "<b>LINK</b> · EMMA LIVE";
+        stateChip.style.borderColor = "rgba(45,212,168,0.6)";
+      }
+      /* process only new entries */
+      const fresh = lastTs ? entries.filter((e) => e.ts > lastTs) : entries.slice(-3);
+      for (const entry of fresh) classifyEvent(entry);
+      if (entries.length) lastTs = entries[entries.length - 1].ts;
+    } catch (e) {
+      if (connected) {
+        connected = false;
+        chip.innerHTML = "<b>LINK</b> · RECONNECTING";
+        stateChip.style.borderColor = "rgba(255,176,32,0.4)";
+      }
+    }
+    pollTimer = setTimeout(poll, 2000);
+  }
+
+  function tick() {
+    const now = performance.now();
+    if (now > stateExpiry && activeState !== "idle") {
+      activeState = "idle";
+      stateExpiry = 0;
+    }
+    if (!Demo.on) State.set(activeState);
+  }
+
+  return {
+    start() { clearTimeout(pollTimer); connected = false; poll(); },
+    stop() { clearTimeout(pollTimer); },
+    tick,
+    get connected() { return connected; },
+  };
+})();
+
+/* ============================================================== MAIN LOOP */
+let last = performance.now();
+let bgSkip = false;
+function frame(now) {
+  requestAnimationFrame(frame);
+  if (document.hidden) { last = now; return; }   /* pause when the tab is hidden */
+  let dt = (now - last) / 1000; last = now;
+  dt = Math.min(dt, 0.05);                        /* clamp resume jump */
+  const t = now / 1000;
+
+  /* backend-driven state transitions (lives outside Demo) */
+  BackendLink.tick();
+
+  /* shared easing clock: color, brightness, rings, audio levels */
+  const mood = State.tick(dt);
+  const lv = AudioSys.poll(dt);
+
+  /* energy = real audio when speaking/listening, synthetic otherwise (auto) */
+  const energy = (mood.name === "speaking" || mood.name === "listening") ? lv.loudness : mood.energy;
+
+  /* ---------------- orb layer ---------------- */
+  const O = Orb;
+  O.time += dt;
+  O.orbMat.uniforms.uTime.value = O.time;
+  O.orbMat.uniforms.uColor.value.copy(mood.color);
+  O.orbMat.uniforms.uBright.value = mood.bright * (0.75 + 0.55 * energy);
+  O.orbMat.uniforms.uGlow.value = mood.glow;
+  O.orbMat.uniforms.uChurn.value = mood.churn;
+  O.orbMat.uniforms.uEnergy.value = energy;
+  O.orb.rotation.y += dt * mood.spin;
+  O.orb.rotation.x += dt * mood.spinX * 0.4;
+
+  O.haloMat.color.copy(mood.color);
+  O.haloMat.opacity = mood.halo * (0.55 + 0.45 * energy);
+  O.halo.scale.setScalar(5.4 * (1 + 0.06 * Math.sin(t * 0.8) + 0.10 * energy));
+
+  /* helix rings — the focal point of processing */
+  O.ringMat.uniforms.uOpacity.value = mood.rings * 0.85;
+  const rc = O.ringMat.uniforms.uColor.value;
+  rc.lerpColors(COL.teal, COL.purple, (Math.sin(O.time * 0.5) + 1) / 2);
+  O.ringMat.uniforms.uTime.value = O.time;
+  for (const r of O.rings) {
+    r.mesh.visible = mood.rings > 0.02;
+    r.mesh.rotation.z += dt * r.speed * 0.4;
+    r.mesh.rotation.x = r.tilt + Math.sin(O.time * 0.3 + r.speed) * 0.08;
+  }
+
+  /* constellation: orbit (still under reduced motion), breathing, flares */
+  for (const a of O.agents) {
+    if (!prefersReduced) {
+      a.angle += dt * a.def.speed;
+      a.pivot.rotation.y = a.angle;
+    }
+    a.pivot.updateMatrixWorld(true);
+    a.sprite.getWorldPosition(a.worldPos);
+    /* breathing — subtle, out of phase per agent */
+    const breathe = 1 + 0.05 * Math.sin(t * 1.1 + a.breathePhase);
+    const flare = a.flare;
+    a.sprite.scale.setScalar(0.42 * breathe * (1 + flare * 0.85));
+    a.sprite.material.opacity = 0.72 + 0.28 * flare;
+    a.working.material.opacity = a.isWorking ? 0.5 + 0.4 * Math.sin(t * 5) : 0;
+    a.working.scale.setScalar(0.85 * (1 + 0.12 * Math.sin(t * 5)));
+    if (a.flare > 0) a.flare = Math.max(0, a.flare - dt * 1.4);
+
+    /* ---- label follows the avatar ---- */
+    const v = a.worldPos.clone().project(O.camera);
+    const x = (v.x * 0.5 + 0.5) * innerWidth;
+    const y = (-v.y * 0.5 + 0.5) * innerHeight;
+    const orbScreenR = (ORB_R / Math.tan(FOV * Math.PI / 360)) * (innerHeight / 2) / CAM_Z;
+    const dFromOrb = Math.hypot(x - innerWidth / 2, y - innerHeight / 2);
+    if (!isNaN(x)) {
+      a.label.style.transform = `translate(-50%, 10px) translate(${x}px, ${y}px)`;
+      if (!a.labelReady) { a.label.classList.add("ready"); a.labelReady = true; }
+      /* far side of the orbit (camera-space z) dims the label */
+      const camZ = a.worldPos.clone().applyMatrix4(O.camera.matrixWorldInverse).z;
+      const behind = camZ > 0;
+      const nearOrb = clamp((dFromOrb - orbScreenR * 0.92) / (orbScreenR * 1.9), 0, 1);
+      a.label.style.opacity = (behind ? 0.32 : 1) * (0.35 + 0.65 * nearOrb);
+      a.label.style.zIndex = String(1000 - Math.round(camZ * 60));
+      if (behind && dFromOrb < orbScreenR * 0.55) a.label.style.opacity = "0";
+    }
+  }
+
+  /* beams: out-and-back with traveler */
+  for (let i = O.beams.length - 1; i >= 0; i--) {
+    const b = O.beams[i];
+    b.t += dt;
+    const T = b.t;
+    if (T < 0.4) {                     /* racing out */
+      b.tube.material.opacity = T / 0.4 * 0.85;
+      b.traveler.material.opacity = T / 0.4;
+      b.traveler.position.copy(b.curve.getPoint(T / 0.4 * 0.98));
+    } else if (T < 1.6) {              /* easing back */
+      const k = (T - 0.4) / 1.2;
+      b.tube.material.opacity = Math.max(0, 0.85 * (1 - k * k));
+      b.traveler.material.opacity = 1 - k;
+      b.traveler.position.copy(b.curve.getPoint(1 - k));
+    } else {
+      O.scene.remove(b.tube, b.traveler);
+      b.tube.geometry.dispose(); b.tube.material.dispose();
+      b.traveler.material.dispose();
+      O.beams.splice(i, 1);
+      continue;
+    }
+  }
+  /* sonar pings */
+  for (let i = O.pings.length - 1; i >= 0; i--) {
+    const p = O.pings[i];
+    p.t += dt;
+    const k = p.t / 0.9;
+    if (k >= 1) {
+      O.scene.remove(p.ring); p.ring.geometry.dispose(); p.ring.material.dispose();
+      O.pings.splice(i, 1);
+      continue;
+    }
+    p.ring.scale.setScalar(lerp(1, p.maxScale, k * k));
+    p.ring.material.opacity = 0.85 * (1 - k);
+  }
+
+  /* tether to a docked agent */
+  const docked = O.agents.find((a) => a.dock);
+  if (docked) {
+    O.tether.visible = true;
+    const p = O.tether.geometry.attributes.position;
+    p.setXYZ(0, 0, 0, 0); p.setXYZ(1, docked.worldPos.x, docked.worldPos.y, docked.worldPos.z);
+    p.needsUpdate = true;
+  } else O.tether.visible = false;
+
+  O.renderer.render(O.scene, O.camera);
+
+  /* ---------------- background layer (separate renderer) ---------------- */
+  Bg.pool.material.color.copy(mood.color);
+  Bg.pool.material.opacity = 0.34 + 0.3 * mood.bright * (0.6 + 0.4 * energy);
+  Bg.tick(dt, t, O.time);
+  if (!Bg.perf || (bgSkip = !bgSkip)) Bg.renderer.render(Bg.scene, Bg.camera);
+}
+
+/* ============================================================== GLOBAL API */
+/* Tier 6 — everything reachable from the console for testing & wiring. */
+window.Cosmos = {
+  setState: (name) => { Demo.stop(); State.set(name); return name; },
+  dispatchAgent(id) {
+    const a = Orb.agents.find((x) => x.def.id === id);
+    if (!a) return console.warn("cosmos: no agent", id);
+    a.flare = 1;                                  /* flare peaks mid-dispatch */
+    Orb.spawnBeam(a);                             /* beam out and back */
+    Orb.spawnPing(new THREE.Vector3(0, 0, 0), a.def.color, 1.4);   /* orb "sending" beat */
+    setTimeout(() => {
+      a.flare = 0.6;
+      Orb.spawnPing(a.worldPos.clone(), a.def.color, 2.4);         /* sonar at arrival */
+      a.isWorking = true;
+      setTimeout(() => { a.isWorking = false; }, 3600);
+    }, 420);
+    console.info("cosmos: dispatched", id);
+  },
+  setWorking(id, on) {
+    const a = Orb.agents.find((x) => x.def.id === id);
+    if (a) a.isWorking = !!on;
+  },
+  /* dock an agent near an on-screen element (HUD embedding); null to return */
+  dockAgent(id, elOrNull) {
+    Demo.stop();
+    const a = Orb.agents.find((x) => x.def.id === id);
+    if (!a) return;
+    a.dock = elOrNull ? { el: elOrNull } : null;
+  },
+  addAgent(def) {
+    /* runtime addition: generate avatar + label on the fly */
+    def.color = def.color || 0x5eead4;
+    def.dist = def.dist || rand(2.9, 3.6);
+    def.speed = def.speed || rand(0.08, 0.2);
+    def.start = def.start == null ? rand(0, 6.28) : def.start;
+    def.tilt = def.tilt == null ? (Math.random() > 0.5 ? 0.5 : -0.5) : def.tilt;
+    const size = 128;
+    const c = document.createElement("canvas"); c.width = c.height = size;
+    const g = c.getContext("2d");
+    const col = "#" + def.color.toString(16).padStart(6, "0");
+    const grad = g.createRadialGradient(64, 64, 6, 64, 64, 64);
+    grad.addColorStop(0, col + "ff"); grad.addColorStop(0.42, col + "55"); grad.addColorStop(1, col + "00");
+    g.fillStyle = grad; g.fillRect(0, 0, size, size);
+    g.strokeStyle = "rgba(255,255,255,0.85)"; g.lineWidth = 2.5;
+    g.beginPath(); g.arc(64, 64, 56, 0, 6.2832); g.stroke();
+    g.fillStyle = "rgba(2,8,16,0.72)"; g.beginPath(); g.arc(64, 64, 30, 0, 6.2832); g.fill();
+    g.fillStyle = "#eafffb"; g.font = "800 44px Orbitron, sans-serif";
+    g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(def.name[0], 64, 66);
+    const pivot = new THREE.Object3D();
+    pivot.rotation.x = def.tilt;
+    Orb.constellation.add(pivot);
+    const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: new THREE.CanvasTexture(c), transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, color: 0xffffff, opacity: 0.9 }));
+    sprite.scale.setScalar(0.42);
+    pivot.add(sprite);
+    sprite.position.set(Math.cos(def.start) * def.dist, 0, Math.sin(def.start) * def.dist);
+    const working = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: Orb.halo.material.map, transparent: true, blending: THREE.AdditiveBlending,
+      depthWrite: false, color: def.color, opacity: 0 }));
+    working.scale.setScalar(0.85); pivot.add(working);
+    const label = document.createElement("div");
+    label.className = "cosmos-label";
+    label.innerHTML = `<div class="nm" style="color:${col}">${def.name}</div><div class="sp">${def.specialty || ""}</div>`;
+    document.getElementById("label-layer").appendChild(label);
+    const agent = {
+      def, pivot, sprite, working, angle: def.start,
+      worldPos: new THREE.Vector3(), label, labelReady: false,
+      flare: 0, isWorking: false, dock: null, breathePhase: rand(0, 6.28),
+    };
+    Orb.agents.push(agent);
+    console.info("cosmos: added agent", def.id);
+    return agent;
+  },
+  setPerformance(on) { Bg.perf = !!on; document.getElementById("btn-perf").classList.toggle("on", !!on); },
+  setDemo(on) {
+    if (on) { Demo.start(); BackendLink.stop(); } else { Demo.stop(); BackendLink.start(); }
+    document.getElementById("btn-demo").classList.toggle("on", !!on);
+    document.getElementById("btn-demo").textContent = on ? "DEMO" : "LIVE";
+    const chip = document.getElementById("link-chip");
+    chip.innerHTML = on ? "<b>LINK</b> · DEMO MODE" : "<b>LINK</b> · CONNECTING";
+  },
+  get agents() { return Orb.agents.map((a) => a.def.id); },
+  get state() { return State.current; },
+};
+
+/* ================================================================ BOOT */
+function resize() {
+  const w = innerWidth, h = innerHeight, a = w / h;
+  Bg.camera.aspect = a; Bg.camera.updateProjectionMatrix();
+  Bg.renderer.setSize(w, h);
+  Bg.renderer.setPixelRatio(Bg.perf ? Math.min(devicePixelRatio, 1) : Math.min(devicePixelRatio, 2));
+  Orb.camera.aspect = a; Orb.camera.updateProjectionMatrix();
+  Orb.renderer.setSize(w, h);
+  Orb.renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+}
+addEventListener("resize", resize);
+resize();
+
+/* controls */
+document.getElementById("btn-demo").addEventListener("click", () => {
+  Cosmos.setDemo(!Demo.on);
+});
+document.getElementById("btn-perf").addEventListener("click", (e) => {
+  Cosmos.setPerformance(!Bg.perf); e.target.classList.toggle("on", Bg.perf);
+  resize();
+});
+/* iOS note: audio context must start inside a real tap — the mic request is a tap */
+addEventListener("pointerdown", () => AudioSys.startMic(), { once: true });
+
+BackendLink.start();
+requestAnimationFrame(frame);
+console.info("cosmos: EMMA living core online — live mode. try Cosmos.setState('speaking'), Cosmos.dispatchAgent('map'), Cosmos.addAgent({id:'x', name:'X'})");
+</script>
+</body>
+</html>

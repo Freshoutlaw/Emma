@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emma — Region Intelligence</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=JetBrains+Mono:wght@300;400;700&family=Inter:wght@300;400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --bg: #030812;
+    --panel-bg: rgba(6, 16, 34, 0.62);
+    --border: rgba(150, 210, 255, 0.14);
+    --border-strong: rgba(0, 242, 254, 0.35);
+    --cyan: #00F2FE;
+    --orange: #FF9F1C;
+    --amber: #FFB020;
+    --red: #FF2A55;
+    --green: #3DFFA2;
+    --white: #eaf6ff;
+    --dim: rgba(200, 230, 255, 0.55);
+    --faint: rgba(180, 210, 240, 0.28);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+  body {
+    color: var(--white);
+    font-family: 'Inter', sans-serif;
+    background-image: radial-gradient(rgba(0, 242, 254, 0.05) 1px, transparent 1.4px);
+    background-size: 22px 22px;
+  }
+  .stage { position: fixed; inset: 0; }
+  #dash {
+    position: absolute; left: 50%; top: 50%;
+    width: 1400px; height: 820px;
+    transform: translate(-50%, -50%);
+    display: grid;
+    grid-template-rows: 74px 1fr 40px;
+    grid-template-columns: 320px 1fr 340px;
+    gap: 12px;
+    padding: 14px;
+    transform-origin: center center;
+  }
+
+  .corner { position: absolute; width: 26px; height: 26px; pointer-events: none; z-index: 5; }
+  .corner.tl { top: 2px; left: 2px; border-top: 2px solid var(--border-strong); border-left: 2px solid var(--border-strong); }
+  .corner.tr { top: 2px; right: 2px; border-top: 2px solid var(--border-strong); border-right: 2px solid var(--border-strong); }
+  .corner.bl { bottom: 2px; left: 2px; border-bottom: 2px solid var(--border-strong); border-left: 2px solid var(--border-strong); }
+  .corner.br { bottom: 2px; right: 2px; border-bottom: 2px solid var(--border-strong); border-right: 2px solid var(--border-strong); }
+
+  /* header */
+  #topbar {
+    grid-column: 1 / 4;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 26px;
+    background: linear-gradient(180deg, rgba(0, 242, 254, 0.06), rgba(0, 242, 254, 0.01) 70%, transparent);
+    border-bottom: 1px solid rgba(0, 242, 254, 0.18);
+  }
+  .brand { display: flex; align-items: center; gap: 12px; min-width: 300px; }
+  .brand-mark { width: 40px; height: 40px; }
+  .brand-mark svg { width: 100%; height: 100%; animation: spinSlow 12s linear infinite; }
+  .brand-name { font-family: 'Orbitron', monospace; font-weight: 700; font-size: 20px; letter-spacing: 3px; color: var(--white); text-shadow: 0 0 12px rgba(0,242,254,.6); }
+  .brand-sub { font-size: 9px; letter-spacing: 3px; color: var(--dim); text-transform: uppercase; margin-top: 2px; }
+  .main-title { text-align: center; flex: 1; min-width: 0; }
+  .main-title h1 { font-size: 26px; font-weight: 600; letter-spacing: 5px; color: var(--white); text-shadow: 0 0 24px rgba(0,242,254,.5); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .main-title .region-line { font-family: 'JetBrains Mono', monospace; font-size: 12px; letter-spacing: 2px; color: var(--orange); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .realtag { font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 2px; color: var(--green); border: 1px solid rgba(61,255,162,.4); padding: 3px 10px; border-radius: 3px; min-width: 150px; text-align: center; }
+  .clock { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--dim); min-width: 150px; text-align: right; }
+  .clock b { color: var(--cyan); font-weight: 400; }
+
+  /* panels */
+  .panel {
+    position: relative;
+    background: linear-gradient(160deg, rgba(0,242,254,0.05), var(--panel-bg) 45%);
+    border: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    padding: 14px;
+    overflow: hidden;
+  }
+  .panel::before { content: ''; position: absolute; top: -1px; left: -1px; width: 14px; height: 14px; border-top: 2px solid var(--border-strong); border-left: 2px solid var(--border-strong); pointer-events: none; }
+  .panel::after { content: ''; position: absolute; bottom: -1px; right: -1px; width: 14px; height: 14px; border-bottom: 2px solid var(--border-strong); border-right: 2px solid var(--border-strong); pointer-events: none; }
+  .p-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; flex: 0 0 auto; }
+  .p-title { display: flex; align-items: center; gap: 8px; font-size: 13px; letter-spacing: 1px; color: var(--white); font-weight: 500; }
+  .p-title .sq { width: 8px; height: 12px; background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+  .p-title .sq.orange { background: var(--orange); box-shadow: 0 0 8px var(--orange); }
+  .p-title .sq.green { background: var(--green); box-shadow: 0 0 8px var(--green); }
+  .p-sub { font-size: 9px; color: var(--dim); font-family: 'JetBrains Mono', monospace; letter-spacing: 1px; }
+
+  #col-left { grid-column: 1; grid-row: 2; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  #col-right { grid-column: 3; grid-row: 2; display: flex; flex-direction: column; gap: 12px; min-height: 0; }
+  #col-center { grid-column: 2; grid-row: 2; position: relative; border: 1px solid var(--border); background: #06101e; min-height: 0; overflow: hidden; }
+  #footer { grid-column: 1 / 4; display: flex; align-items: center; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--faint); padding: 0 20px; border-top: 1px solid rgba(0,242,254,0.12); }
+
+  /* facts */
+  .fact-row { display: flex; justify-content: space-between; gap: 12px; font-family: 'JetBrains Mono', monospace; font-size: 12px; padding: 8px 0; border-bottom: 1px solid rgba(150,210,255,0.08); }
+  .fact-row:last-child { border-bottom: 0; }
+  .fact-row .k { color: var(--dim); }
+  .fact-row .v { color: var(--white); text-align: right; word-break: break-word; }
+  .fact-row .v.cyan { color: var(--cyan); }
+  .fact-row .v.orange { color: var(--orange); }
+  .fact-desc { font-size: 12px; line-height: 1.55; color: var(--dim); margin-top: 10px; }
+  .note { font-size: 10px; line-height: 1.5; color: var(--faint); font-family: 'JetBrains Mono', monospace; margin-top: 10px; }
+  .note .good { color: var(--green); }
+  .note .bad { color: var(--red); }
+
+  /* weather */
+  .wx-cond { display: flex; align-items: center; gap: 14px; margin-bottom: 10px; }
+  .wx-temp { font-family: 'Orbitron', monospace; font-size: 44px; font-weight: 700; color: var(--white); text-shadow: 0 0 16px rgba(0,242,254,.4); line-height: 1; }
+  .wx-temp small { font-size: 20px; color: var(--cyan); }
+  .wx-label { font-size: 13px; color: var(--cyan); letter-spacing: 1px; }
+  .wx-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .wx-kv { border-left: 2px solid var(--cyan); padding-left: 8px; }
+  .wx-kv.alt { border-left-color: var(--orange); }
+  .wx-kv .l { font-size: 10px; color: var(--dim); letter-spacing: 1px; }
+  .wx-kv .v { font-family: 'JetBrains Mono', monospace; font-size: 16px; color: var(--white); }
+  .wx-kv .v small { font-size: 10px; color: var(--faint); }
+  .wx-stamp { font-size: 9px; color: var(--faint); font-family: 'JetBrains Mono', monospace; margin-top: 10px; }
+  .wx-trace { margin-top: 10px; padding: 8px 10px; background: rgba(0,242,254,.06); border: 1px solid rgba(0,242,254,.15); border-radius: 4px; font-family: 'JetBrains Mono', monospace; font-size: 10px; line-height: 1.6; color: var(--dim); }
+  .wx-trace .t-label { color: var(--cyan); letter-spacing: 1px; font-size: 9px; }
+  .wx-trace .t-val { color: var(--white); }
+  .wx-trace .t-time { color: var(--orange); font-weight: 600; }
+  .wx-trace .t-source { color: var(--green); }
+  .wx-refresh { margin-top: 8px; background: rgba(0,242,254,.08); border: 1px solid var(--border); color: var(--cyan); font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: 1px; padding: 6px 10px; border-radius: 4px; cursor: pointer; }
+  .wx-refresh:hover { border-color: var(--cyan); }
+  .empty-box { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--dim); font-family: 'JetBrains Mono', monospace; font-size: 12px; text-align: center; padding: 20px; }
+  .empty-box .big { font-size: 26px; }
+  .spinner { width: 18px; height: 18px; border: 2px solid rgba(0,242,254,.25); border-top-color: var(--cyan); border-radius: 50%; animation: spin 0.9s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* map */
+  #map { position: absolute; inset: 0; z-index: 1; background: #06101e; }
+  .leaflet-container { font-family: 'Inter', sans-serif; }
+  .map-attrib { position: absolute; left: 0; right: 0; bottom: 0; z-index: 2; background: rgba(3,8,18,.72); color: var(--faint); font-family: 'JetBrains Mono', monospace; font-size: 9px; padding: 4px 10px; pointer-events: none; }
+  .map-attrib a { color: var(--cyan); pointer-events: auto; }
+  #map-overlay { position: absolute; inset: 0; z-index: 3; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; background: rgba(3,8,18,.88); color: var(--dim); font-family: 'JetBrains Mono', monospace; font-size: 12px; text-align: center; padding: 30px; }
+  #map-overlay.hidden { display: none; }
+  #map-overlay .big { font-size: 30px; }
+  #map-overlay .name { color: var(--white); font-size: 15px; }
+
+  @keyframes spinSlow { to { transform: rotate(360deg); } }
+  .live { animation: blink 1.6s step-end infinite; }
+  @keyframes blink { 50% { opacity: .25; } }
+</style>
+</head>
+<body>
+<div class="stage">
+  <div id="dash">
+    <span class="corner tl"></span><span class="corner tr"></span>
+    <span class="corner bl"></span><span class="corner br"></span>
+
+    <header id="topbar">
+      <div class="brand">
+        <div class="brand-mark">
+          <svg viewBox="0 0 40 40">
+            <circle cx="20" cy="20" r="16" fill="none" stroke="var(--cyan)" stroke-width="1.5" stroke-dasharray="4 4"/>
+            <circle cx="20" cy="20" r="10" fill="none" stroke="var(--orange)" stroke-width="2" stroke-dasharray="14 6"/>
+            <circle cx="20" cy="20" r="3" fill="var(--cyan)"/>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-name">EMMA</div>
+          <div class="brand-sub">Region Intelligence · Real Data</div>
+        </div>
+      </div>
+      <div class="main-title">
+        <h1 id="title-name">REGION</h1>
+        <div class="region-line" id="region-line">RESOLVING…</div>
+      </div>
+      <div class="realtag">REAL DATA · OSM + OPEN-METEO</div>
+      <div class="clock">LOCAL <b id="clock">—</b></div>
+    </header>
+
+    <aside id="col-left">
+      <div class="panel" style="flex: 1 1 0; min-height: 0;">
+        <div class="p-head"><div class="p-title"><span class="sq"></span>Region Facts</div><span class="p-sub" id="fact-source">SOURCE</span></div>
+        <div id="facts"></div>
+        <div class="note" id="facts-note"></div>
+      </div>
+    </aside>
+
+    <section id="col-center">
+      <div id="map"></div>
+      <div class="map-attrib">Map: <a href="https://www.openstreetmap.org/copyright" target="_blank">© OpenStreetMap contributors</a> · Marker: resolved coordinates</div>
+      <div id="map-overlay" class="hidden"></div>
+    </section>
+
+    <aside id="col-right">
+      <div class="panel" style="flex: 1 1 0; min-height: 0;">
+        <div class="p-head"><div class="p-title"><span class="sq green"></span>Live Weather</div><span class="p-sub">OPEN-METEO</span></div>
+        <div id="weather"><div class="empty-box"><div class="spinner"></div><div>fetching live weather…</div></div></div>
+      </div>
+    </aside>
+
+    <footer id="footer">
+      <span>emma-ai · region intelligence · <span id="foot-ts" class="live">—</span></span>
+      <span>weather: Open-Meteo (free, keyless) · map: OpenStreetMap tiles</span>
+    </footer>
+  </div>
+</div>
+
+<!-- Leaflet from CDN, with a fallback -->
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>window.L || document.write('<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"><\/script>');</script>
+
+<script>
+"use strict";
+/* =====================================================================
+   Emma — Region Intelligence dashboard (REAL DATA ONLY).
+   - Region facts: from the agent payload (curated dataset or Open-Meteo
+     geocoding) — never invented.
+   - Map: OpenStreetMap tiles at the real coordinates (Leaflet).
+   - Weather: live Open-Meteo current conditions at those coordinates.
+   - If the region was not resolved (no coordinates), the dashboard says so
+     honestly instead of showing fabricated numbers.
+   Query params: region, country, code, lat, lon, tz, pop, resolved, source
+===================================================================== */
+
+const Q = new URLSearchParams(location.search);
+const REGION = {
+  name: Q.get('region') || null,
+  country: Q.get('country') || null,
+  code: Q.get('code') ? Q.get('code').toUpperCase().slice(0, 3) : null,
+  lat: Q.has('lat') ? parseFloat(Q.get('lat')) : null,
+  lon: Q.has('lon') ? parseFloat(Q.get('lon')) : null,
+  tz: Q.get('tz') || null,
+  pop: Q.get('pop') || null,
+  resolved: Q.get('resolved') === '1' || (Q.has('lat') && Q.has('lon')),
+  source: Q.get('source') || null,
+};
+
+const $ = (id) => document.getElementById(id);
+const fmt = (n) => (n == null ? '—' : Number(n).toLocaleString('en-US'));
+
+/* ------------------------------ header ---------------------------------- */
+function renderHeader() {
+  $('title-name').textContent = REGION.name ? REGION.name.toUpperCase() : 'REGION';
+  const bits = [REGION.name ? REGION.name.toUpperCase() : '—', REGION.country ? REGION.country.toUpperCase() : '—', REGION.code || '—'];
+  if (REGION.lat != null) bits.push(`${REGION.lat}°, ${REGION.lon}°`);
+  $('region-line').textContent = 'REGION: ' + bits.join(' · ');
+  $('fact-source').textContent = (REGION.source || 'NOT RESOLVED').toUpperCase();
+}
+
+function tickClock() {
+  const now = new Date();
+  let t;
+  try {
+    t = new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: REGION.tz || undefined }).format(now);
+  } catch (e) {
+    t = now.toTimeString().slice(0, 8);
+  }
+  $('clock').textContent = t + (REGION.tz ? ' · ' + REGION.tz : '');
+  $('foot-ts').textContent = now.toISOString().slice(0, 10) + ' ' + t;
+}
+setInterval(tickClock, 1000);
+
+/* ------------------------------ facts ----------------------------------- */
+function renderFacts() {
+  const rows = [
+    ['Region', REGION.name || '—'],
+    ['Country', REGION.country || '—'],
+    ['Code', REGION.code || '—'],
+    ['Latitude', REGION.lat != null ? String(REGION.lat) : '—'],
+    ['Longitude', REGION.lon != null ? String(REGION.lon) : '—'],
+    ['Time zone', REGION.tz || '—'],
+    ['Population', REGION.pop != null ? '≈ ' + fmt(REGION.pop) + 'M' : '—'],
+  ];
+  $('facts').innerHTML = rows.map(([k, v]) =>
+    `<div class="fact-row"><span class="k">${k}</span><span class="v ${k === 'Region' ? 'cyan' : ''}">${v}</span></div>`).join('');
+
+  const note = $('facts-note');
+  if (REGION.resolved) {
+    note.innerHTML = '<span class="good">✔</span> Coordinates are real — resolved via ' +
+      (REGION.source || 'real data') + '. Map and weather show live data for this exact point.';
+  } else {
+    note.innerHTML = '<span class="bad">✖</span> This region could not be resolved to real coordinates ' +
+      '(unknown place or network unavailable). No invented data is shown — ' +
+      (REGION.name ? 'try a more specific name for “' + REGION.name + '”.' : 'try a specific city or country.');
+  }
+}
+
+/* ------------------------------ map ------------------------------------- */
+function initMap() {
+  const overlay = $('map-overlay');
+  if (!REGION.resolved || REGION.lat == null || REGION.lon == null) {
+    overlay.classList.remove('hidden');
+    overlay.innerHTML =
+      '<div class="big">🌐</div>' +
+      '<div class="name">' + (REGION.name || 'Unknown region') + '</div>' +
+      '<div>No real coordinates available — the map cannot be shown for an unresolved region.</div>' +
+      '<div style="color:var(--faint);font-size:10px">Ask for a resolvable city or country, or open the network gate.</div>';
+    return;
+  }
+  if (!window.L) {
+    overlay.classList.remove('hidden');
+    overlay.innerHTML = '<div class="big">🛰</div><div>Map library failed to load (CDN blocked).</div><div style="color:var(--faint);font-size:10px">Weather and facts still work.</div>';
+    return;
+  }
+  try {
+    const map = L.map('map', { attributionControl: false }).setView([REGION.lat, REGION.lon], 11);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+    }).addTo(map);
+    L.marker([REGION.lat, REGION.lon]).addTo(map)
+      .bindPopup('<b>' + (REGION.name || '') + '</b><br>' + (REGION.country || '') + ' · ' + REGION.lat + ', ' + REGION.lon)
+      .openPopup();
+  } catch (e) {
+    overlay.classList.remove('hidden');
+    overlay.innerHTML = '<div class="big">🛰</div><div>Map could not render.</div>';
+  }
+}
+
+/* ------------------------------ weather --------------------------------- */
+const WMO = {
+  0: 'Clear sky', 1: 'Mainly clear', 2: 'Partly cloudy', 3: 'Overcast',
+  45: 'Fog', 48: 'Depositing rime fog',
+  51: 'Light drizzle', 53: 'Drizzle', 55: 'Dense drizzle',
+  56: 'Light freezing drizzle', 57: 'Dense freezing drizzle',
+  61: 'Light rain', 63: 'Rain', 65: 'Heavy rain',
+  66: 'Light freezing rain', 67: 'Heavy freezing rain',
+  71: 'Light snow', 73: 'Snow', 75: 'Heavy snow', 77: 'Snow grains',
+  80: 'Light rain showers', 81: 'Rain showers', 82: 'Violent rain showers',
+  85: 'Light snow showers', 86: 'Snow showers',
+  95: 'Thunderstorm', 96: 'Thunderstorm with hail', 99: 'Thunderstorm with hail',
+};
+const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
+
+function wxLabel(code) {
+  return WMO[code] || ('Weather code ' + code);
+}
+
+async function loadWeather() {
+  const el = $('weather');
+  if (!REGION.resolved || REGION.lat == null || REGION.lon == null) {
+    el.innerHTML = '<div class="empty-box"><div class="big">🌦</div><div>Weather unavailable — region not resolved.</div></div>';
+    return;
+  }
+  el.innerHTML = '<div class="empty-box"><div class="spinner"></div><div>fetching live weather…</div></div>';
+  const url = 'https://api.open-meteo.com/v1/forecast'
+    + '?latitude=' + REGION.lat + '&longitude=' + REGION.lon
+    + '&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_direction_10m'
+    + '&temperature_unit=celsius&wind_speed_unit=kmh&timezone=auto&forecast_days=1';
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const c = data.current || {};
+    if (!c || c.weather_code == null) throw new Error('no current data');
+    const dir = c.wind_direction_10m != null ? COMPASS[Math.round(c.wind_direction_10m / 45) % 8] : '—';
+    el.innerHTML =
+      '<div class="wx-cond">' +
+        '<div class="wx-temp">' + Math.round(c.temperature_2m) + '<small>°C</small></div>' +
+        '<div><div class="wx-label">' + wxLabel(c.weather_code) + '</div>' +
+        '<div class="wx-stamp">feels like ' + Math.round(c.apparent_temperature) + '°C</div></div>' +
+      '</div>' +        '<div class="wx-meta">' +
+        '<div class="wx-kv"><div class="l">HUMIDITY</div><div class="v">' + Math.round(c.relative_humidity_2m) + '<small>%</small></div></div>' +
+        '<div class="wx-kv alt"><div class="l">WIND</div><div class="v">' + Math.round(c.wind_speed_10m) + '<small> km/h ' + dir + '</small></div></div>' +
+        '<div class="wx-kv"><div class="l">PRECIPITATION</div><div class="v">' + (c.precipitation != null ? c.precipitation : 0) + '<small> mm</small></div></div>' +
+        '<div class="wx-kv alt"><div class="l">OBSERVED</div><div class="v" style="font-size:13px;line-height:1.4;color:var(--orange);font-weight:600">' + (c.time || '—').replace('T', ' ') + '</div></div>' +
+      '</div>' +
+      '<div class="wx-trace">' +
+        '<div><span class="t-label">SOURCE</span> <span class="t-source">Open-Meteo Forecast API</span></div>' +
+        '<div><span class="t-label">OBSERVED</span> <span class="t-time">' + (c.time || '—').replace('T', ' ') + '</span></div>' +
+        '<div><span class="t-label">COORDS</span> <span class="t-val">' + REGION.lat + ', ' + REGION.lon + '</span></div>' +
+        '<div><span class="t-label">REFRESH</span> <span class="t-val">every 10 min · ' + new Date().toLocaleTimeString() + '</span></div>' +
+      '</div>' +
+      '<button class="wx-refresh" onclick="loadWeather()">⟳ REFRESH</button>';
+  } catch (e) {
+    el.innerHTML = '<div class="empty-box"><div class="big">🌦</div>' +
+      '<div>Live weather unavailable — the request to Open-Meteo failed.</div>' +
+      '<div style="color:var(--faint);font-size:10px">' + (e && e.message ? e.message : '') + '</div>' +
+      '<button class="wx-refresh" onclick="loadWeather()">⟳ RETRY</button></div>';
+  }
+}
+
+/* ------------------------------ boot ------------------------------------ */
+renderHeader();
+renderFacts();
+initMap();
+loadWeather();
+setInterval(() => { if (REGION.resolved) loadWeather(); }, 10 * 60 * 1000);
+</script>
+</body>
+</html>

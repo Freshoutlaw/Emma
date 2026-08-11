@@ -1,0 +1,71 @@
+# Emma stack: Postgres+pgvector, Mosquitto, Ollama, and the Emma backend.
+# Usage: docker compose -f infrastructure/docker-compose.yml up -d
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: emma-postgres
+    environment:
+      POSTGRES_USER: emma
+      POSTGRES_PASSWORD: emma
+      POSTGRES_DB: emma
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U emma"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: emma-mosquitto
+    ports:
+      - "1883:1883"
+      - "9001:9001"
+    volumes:
+      - ./mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: emma-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  emma:
+    build:
+      context: ..
+      dockerfile: infrastructure/Dockerfile
+    container_name: emma-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mosquitto:
+        condition: service_started
+      ollama:
+        condition: service_healthy
+    environment:
+      EMMA_OLLAMA_URL: http://ollama:11434
+      EMMA_MQTT_HOST: mosquitto
+      EMMA_MQTT_PORT: 1883
+      EMMA_SUPABASE_URL: ${SUPABASE_URL:-}
+      EMMA_SUPABASE_ANON_KEY: ${SUPABASE_ANON_KEY:-}
+      EMMA_SUPABASE_SERVICE_KEY: ${SUPABASE_SERVICE_KEY:-}
+      EMMA_GROQ_API_KEY: ${GROQ_API_KEY:-}
+    ports:
+      - "8000:8000"
+    volumes:
+      - emma-data:/app/data
+
+volumes:
+  pgdata:
+  ollama:
+  emma-data:

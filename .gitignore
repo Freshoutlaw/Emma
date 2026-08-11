@@ -1,0 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Virtualenv / tooling
+.venv/
+venv/
+.idea/
+.vscode/
+
+# Environment
+.env
+.env.local
+
+# Runtime data (audit logs, memory db, kill switch, backups, keys)
+data/
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Freebuff desktop app state (thread/workspace DB)
+.freebuff/
+
+# pytest cache
+.pytest_cache/
+
+# Environment dumps containing secrets (see .env)
+env_new

@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emma — Nexus Core</title>
+<link rel="stylesheet" href="static/style.css">
+</head>
+<body>
+
+<div class="grid-bg"></div>
+
+<!-- The AI core — central element -->
+<div class="nexus-container">
+  <div class="core-orb" id="core-orb"></div>
+  <svg class="nexus-svg" viewBox="0 0 600 600">
+    <g class="anim-cw-slow">
+      <circle class="ring" cx="300" cy="300" r="280" stroke-width="1" stroke-dasharray="4 12" opacity="0.3" />
+      <circle class="ring" cx="300" cy="300" r="260" stroke-width="2" stroke-dasharray="100 20 40 20 300 50" opacity="0.5" />
+    </g>
+    <g class="anim-ccw-med">
+      <circle class="ring" cx="300" cy="300" r="220" stroke-width="1" stroke-dasharray="2 6" opacity="0.4" />
+      <circle class="ring" cx="300" cy="300" r="180" stroke-width="3" stroke-dasharray="80 150 40 100" opacity="0.7" />
+    </g>
+    <g class="anim-cw-fast">
+      <circle class="ring" cx="300" cy="300" r="140" stroke-width="1.5" stroke-dasharray="10 30 50 30" opacity="0.8" />
+    </g>
+    <path d="M300 20 L300 40 M300 560 L300 580 M20 300 L40 300 M560 300 L580 300" stroke="var(--cyan)" stroke-width="2" opacity="0.6"/>
+  </svg>
+</div>
+
+<!-- Emma-controlled content area — dynamically shows what Emma decides -->
+<div id="emma-content" class="emma-content hidden">
+  <div class="emma-content-header">
+    <span class="emma-content-title" id="emma-content-title">Content</span>
+    <button id="emma-content-close" class="close-btn">✕</button>
+  </div>
+  <div class="emma-content-body" id="emma-content-body"></div>
+</div>
+
+<!-- Response terminal + voice control -->
+<div class="terminal-slot">
+  <div class="terminal-log data-text" id="terminal"></div>
+  <div class="voice-bar">
+    <div class="voice-meta">
+      <span class="voice-dot" id="voice-dot"></span>
+      <span class="voice-status" id="voice-status">LISTENING…</span>
+    </div>
+    <button id="mic-btn" class="hud-btn mic-btn" title="Toggle voice">🎙</button>
+    <button id="text-toggle-btn" class="hud-btn text-toggle-btn" title="Toggle text input">⌨</button>
+  </div>
+  <div class="text-input-container hidden" id="text-input-container">
+    <input type="text" id="text-input" class="text-input" placeholder="Type your message here..." />
+    <button id="send-text-btn" class="hud-btn send-btn">Send</button>
+  </div>
+</div>
+
+<!-- Consent banner -->
+<div id="consent-banner" class="consent-banner hidden">
+  <div class="consent-text" id="consent-text">Consent required</div>
+  <div class="btn-row">
+    <button id="consent-approve" class="hud-btn approve">APPROVE</button>
+    <button id="consent-deny" class="hud-btn deny">DENY</button>
+  </div>
+</div>
+
+<script src="static/app.js?v=emma-interface"></script>
+</body>
+</html>

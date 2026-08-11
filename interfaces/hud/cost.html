@@ -1,0 +1,675 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emma — LLM Operations</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --grn: #00ff9d;
+    --grn-dim: rgba(0, 255, 157, 0.35);
+    --grn-faint: rgba(0, 255, 157, 0.12);
+    --grn-bright: #b8ffea;
+    --red: #ff5c5c;
+    --bg: #030705;
+    --panel: rgba(0, 255, 157, 0.045);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+  body { font-family: 'Inter', system-ui, sans-serif; color: var(--grn); }
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-thumb { background: var(--grn-dim); }
+
+  #wrap { position: fixed; inset: 0; padding: 14px 16px 34px;
+    display: flex; flex-direction: column; gap: 10px; overflow: hidden; }
+
+  /* corner-bracket framing */
+  #wrap::before, #wrap::after { content: ""; position: absolute; width: 14px; height: 14px;
+    border: 1.5px solid var(--grn); pointer-events: none; opacity: 0.8; }
+  #wrap::before { top: 6px; left: 6px; border-right: none; border-bottom: none; }
+  #wrap::after { bottom: 26px; right: 6px; border-left: none; border-top: none; }
+
+  .panel { position: relative; background: var(--panel); border: 1px solid var(--grn-dim);
+    border-radius: 3px; padding: 8px 10px; overflow: hidden; }
+  .panel::before { content: ""; position: absolute; top: 0; left: 0; width: 22px; height: 1.5px;
+    background: var(--grn); opacity: 0.9; }
+  .panel h3 { font-family: 'Orbitron', monospace; font-size: 9px; font-weight: 600;
+    letter-spacing: 0.22em; color: var(--grn-bright); display: flex; justify-content: space-between;
+    align-items: center; margin-bottom: 6px; text-shadow: 0 0 8px var(--grn-dim); }
+  .panel h3 .sub { font-family: 'Inter', sans-serif; font-size: 8px; letter-spacing: 0.08em;
+    color: var(--grn-dim); font-weight: 500; text-shadow: none; }
+
+  /* ---------- header ---------- */
+  #hdr { display: flex; align-items: center; justify-content: space-between; padding: 0 2px; }
+  #hdr .brand { display: flex; align-items: center; gap: 10px; }
+  #hdr .xhair { font-size: 18px; color: var(--grn); text-shadow: 0 0 10px var(--grn); }
+  #hdr h1 { font-family: 'Orbitron', monospace; font-size: 15px; font-weight: 800;
+    letter-spacing: 0.3em; color: #eafff5; text-shadow: 0 0 12px var(--grn-dim); }
+  #hdr .tag { font-size: 8.5px; letter-spacing: 0.3em; color: var(--grn); margin-top: 3px; }
+  #hdr .sysbox { display: flex; align-items: center; gap: 14px; }
+  #hdr .status { display: flex; align-items: center; gap: 6px; border: 1px solid var(--grn-dim);
+    padding: 6px 12px; border-radius: 3px; font-family: 'Orbitron', monospace; font-size: 9px;
+    letter-spacing: 0.2em; }
+  #hdr .status .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--grn);
+    box-shadow: 0 0 8px var(--grn); animation: pulse 2s ease-in-out infinite; }
+  #hdr .status.off .dot { background: var(--red); box-shadow: 0 0 8px var(--red); }
+  #hdr .status.off { color: var(--red); border-color: rgba(255,92,92,0.4); }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+  #hdr #globe-sm { width: 44px; height: 44px; }
+
+  /* ---------- grid ---------- */
+  #rows { flex: 1; display: flex; flex-direction: column; gap: 10px; min-height: 0; }
+  .row { display: grid; gap: 10px; min-height: 0; }
+  .r1 { grid-template-columns: 2.1fr 1fr 1fr; height: 30%; }
+  .r2 { grid-template-columns: 1.4fr 1fr; height: 17%; }
+  .r3 { grid-template-columns: 1fr 1.3fr 1fr; height: 20%; }
+  .r4 { grid-template-columns: 1.5fr 1fr; height: 17%; }
+  .r5 { grid-template-columns: 1.6fr 0.8fr 1fr; height: 23%; }
+  canvas.chart { width: 100%; height: 100%; display: block; }
+
+  .big-val { font-family: 'Orbitron', monospace; font-size: 24px; font-weight: 800;
+    color: var(--grn-bright); text-shadow: 0 0 14px var(--grn-dim); }
+  .big-val small { font-size: 11px; font-weight: 400; letter-spacing: 0.1em; color: var(--grn-dim); }
+  .delta { font-family: 'Orbitron', monospace; font-size: 11px; padding: 2px 8px;
+    border-radius: 2px; letter-spacing: 0.08em; }
+  .delta.up { color: var(--red); border: 1px solid rgba(255,92,92,0.5); background: rgba(255,92,92,0.08); }
+  .delta.down { color: var(--grn); border: 1px solid var(--grn-dim); background: var(--grn-faint); }
+  .delta.flat { color: var(--grn-dim); border: 1px solid var(--grn-dim); }
+
+  .metrics { display: flex; flex-direction: column; justify-content: space-between; height: 100%; padding: 2px 0; }
+  .metric { display: flex; justify-content: space-between; align-items: center; font-size: 9px;
+    letter-spacing: 0.12em; border-bottom: 1px dashed var(--grn-faint); padding: 3px 0; }
+  .metric .k { color: var(--grn-dim); }
+  .metric .v { font-family: 'Orbitron', monospace; font-size: 9px; color: var(--grn-bright); }
+
+  /* panels that hold side-by-side columns */
+  .cols { display: flex; gap: 10px; height: 100%; }
+  .cols > .c { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+  .midsplit { display: flex; gap: 10px; height: 100%; }
+  .midsplit .m { flex: 1; min-width: 0; }
+  .midsplit .s { width: 34%; }
+
+  table.grid { width: 100%; border-collapse: collapse; font-size: 8.5px; letter-spacing: 0.06em; }
+  table.grid th { font-family: 'Orbitron', monospace; font-size: 7.5px; letter-spacing: 0.16em;
+    color: var(--grn-dim); text-align: left; padding: 3px 4px; border-bottom: 1px solid var(--grn-dim); }
+  table.grid td { padding: 3px 4px; border-bottom: 1px solid var(--grn-faint); color: var(--grn-bright);
+    white-space: nowrap; }
+  table.grid td.dim { color: var(--grn-dim); }
+  table.grid .ok { color: var(--grn); }
+  table.grid .mono { font-family: 'Orbitron', monospace; font-size: 8px; }
+
+  .bar-row { display: flex; align-items: center; gap: 8px; font-size: 8.5px; margin: 4px 0; }
+  .bar-row .lbl { width: 96px; color: var(--grn-dim); letter-spacing: 0.1em; }
+  .bar-row .track { flex: 1; height: 8px; background: var(--grn-faint); border: 1px solid var(--grn-faint); }
+  .bar-row .fill { height: 100%; background: linear-gradient(90deg, var(--grn-dim), var(--grn));
+    box-shadow: 0 0 8px var(--grn-dim); transition: width 0.8s ease; }
+  .bar-row .pct { width: 40px; text-align: right; font-family: 'Orbitron', monospace; color: var(--grn-bright); }
+
+  .legend { display: flex; flex-direction: column; gap: 4px; font-size: 8.5px; }
+  .legend .li { display: flex; align-items: center; gap: 6px; color: var(--grn-bright); }
+  .legend .sw { width: 8px; height: 8px; box-shadow: 0 0 6px currentColor; }
+  .legend .li .p { margin-left: auto; font-family: 'Orbitron', monospace; color: var(--grn); }
+
+  .goal { display: flex; justify-content: space-between; align-items: center; font-size: 9px;
+    letter-spacing: 0.1em; padding: 5px 2px; border-bottom: 1px dashed var(--grn-faint); }
+  .goal .ck { color: var(--grn); }
+  .goal .bd { font-family: 'Orbitron', monospace; font-size: 7.5px; padding: 1px 6px;
+    border-radius: 2px; letter-spacing: 0.14em; }
+  .goal .bd.done { color: var(--grn); border: 1px solid var(--grn-dim); }
+  .goal .bd.go { color: var(--grn-bright); border: 1px solid var(--grn); background: var(--grn-faint);
+    animation: pulse 1.6s ease-in-out infinite; }
+  .goal .bd.wait { color: var(--grn-dim); border: 1px solid var(--grn-faint); }
+
+  .flow { display: flex; align-items: center; justify-content: space-between; height: 100%; }
+  .flow .node { display: flex; flex-direction: column; align-items: center; gap: 5px;
+    font-family: 'Orbitron', monospace; font-size: 7.5px; letter-spacing: 0.12em; color: var(--grn-dim); }
+  .flow .node .ico { width: 34px; height: 34px; border: 1px solid var(--grn-dim); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-size: 13px;
+    background: var(--panel); box-shadow: 0 0 10px var(--grn-faint); color: var(--grn-bright); }
+  .flow .node .ico.hot { box-shadow: 0 0 14px var(--grn-dim); }
+  .flow .hub { width: 58px; height: 58px; border: 1.5px solid var(--grn); border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; font-family: 'Orbitron', monospace;
+    font-size: 20px; font-weight: 800; color: var(--grn-bright); background: radial-gradient(circle, var(--grn-faint), transparent 70%);
+    box-shadow: 0 0 18px var(--grn-dim); }
+  .flow .spine { flex: 1; height: 1.5px; background: linear-gradient(90deg, var(--grn-dim), var(--grn), var(--grn-dim));
+    opacity: 0.6; position: relative; margin: 0 4px; }
+  .flow .spine::after { content: "►"; position: absolute; top: -7px; left: 46%; color: var(--grn);
+    text-shadow: 0 0 8px var(--grn); animation: move 2.4s linear infinite; }
+  @keyframes move { 0% { left: 8%; opacity: 0; } 15% { opacity: 1; } 85% { opacity: 1; } 100% { left: 88%; opacity: 0; } }
+
+  .risk { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; height: 100%; }
+  .risk .meter { position: relative; width: 92px; height: 92px; }
+  .risk .meter canvas { width: 100%; height: 100%; }
+  .risk .meter .mid { position: absolute; inset: 0; display: flex; flex-direction: column;
+    align-items: center; justify-content: center; font-family: 'Orbitron', monospace; }
+  .risk .meter .mid b { font-size: 16px; color: var(--grn-bright); }
+  .risk .meter .mid span { font-size: 6.5px; letter-spacing: 0.2em; color: var(--grn-dim); }
+  .risk .lab { font-size: 8px; letter-spacing: 0.2em; color: var(--grn-dim); }
+
+  #foot { display: flex; align-items: center; justify-content: space-between; font-size: 8px;
+    letter-spacing: 0.14em; color: var(--grn-dim); padding: 0 2px; }
+  #foot .fitem { display: inline-flex; gap: 6px; align-items: center; }
+  #foot .fitem b { color: var(--grn-bright); font-weight: 600; }
+  #foot .cmd { font-family: 'Orbitron', monospace; color: var(--grn); font-size: 8.5px;
+    text-shadow: 0 0 8px var(--grn-dim); }
+
+  .empty-note { font-size: 9px; letter-spacing: 0.1em; color: var(--grn-dim);
+    display: flex; align-items: center; justify-content: center; height: 100%; }
+</style>
+</head>
+<body>
+<div id="wrap">
+
+  <!-- header -->
+  <div id="hdr">
+    <div class="brand">
+      <span class="xhair">◎</span>
+      <div>
+        <h1>EMMA — LLM OPERATIONS</h1>
+        <div class="tag">TRACK EVERY TOKEN. KNOW YOUR COST.</div>
+      </div>
+    </div>
+    <div class="sysbox">
+      <div class="status" id="sys-status"><span class="dot"></span><span>OPERATIONAL</span></div>
+      <canvas id="globe-sm" class="chart"></canvas>
+    </div>
+  </div>
+
+  <div id="rows">
+
+    <!-- row 1 -->
+    <div class="row r1">
+      <div class="panel">
+        <h3><span>GLOBAL GRID — MONTH SPEND</span><span class="sub" id="p1-sub">—</span></h3>
+        <div class="cols">
+          <div class="c" style="flex:0 0 34%">
+            <div class="metrics">
+              <div class="metric"><span class="k">LLM ROUTE</span><span class="v" id="m-route">AUTO</span></div>
+              <div class="metric"><span class="k">PROMPT CACHE</span><span class="v" id="m-cache">AUTO · 50%</span></div>
+              <div class="metric"><span class="k">USAGE RECORDING</span><span class="v" id="m-record">LIVE</span></div>
+              <div class="metric"><span class="k">CALLS (MTD)</span><span class="v" id="m-calls">0</span></div>
+              <div class="metric"><span class="k">RISK</span><span class="v" id="m-risk">LOW</span></div>
+            </div>
+          </div>
+          <div class="c"><canvas id="globe-lg" class="chart"></canvas></div>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h3><span>MONTH SPEND</span><span class="sub">MTD</span></h3>
+        <div class="big-val" id="v-month">$0.00</div>
+        <div style="margin:4px 0 6px"><span class="delta flat" id="d-month">—</span></div>
+        <canvas id="ch-month" class="chart" style="height:52%"></canvas>
+      </div>
+
+      <div class="panel">
+        <h3><span>TODAY SPEND</span><span class="sub">24H</span></h3>
+        <div class="big-val" id="v-today">$0.00</div>
+        <div style="margin:4px 0 6px; font-size:8px; letter-spacing:0.12em; color:var(--grn-dim)" id="t-cache"></div>
+        <canvas id="ch-today" class="chart" style="height:52%"></canvas>
+      </div>
+    </div>
+
+    <!-- row 2 -->
+    <div class="row r2">
+      <div class="panel">
+        <h3><span>TOKEN BURN INDEX</span><span class="sub">DAILY COST</span></h3>
+        <canvas id="ch-burn" class="chart"></canvas>
+      </div>
+      <div class="panel">
+        <h3><span>MODEL CONTROL</span><span class="sub">COST SHARE</span></h3>
+        <div id="dials" style="display:flex; gap:8px; justify-content:space-around; height:100%; padding-top:4px"></div>
+      </div>
+    </div>
+
+    <!-- row 3 -->
+    <div class="row r3">
+      <div class="panel">
+        <h3><span>MODEL DOMINANCE</span><span class="sub">COST</span></h3>
+        <div class="midsplit">
+          <div class="m"><canvas id="ch-donut" class="chart"></canvas></div>
+          <div class="s"><div class="legend" id="donut-legend"></div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3><span>TOP SPENDERS</span><span class="sub">MODEL</span></h3>
+        <table class="grid" id="tbl-spenders">
+          <thead><tr><th>MODEL</th><th>IN</th><th>OUT</th><th>CACHE</th><th>COST</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h3><span>SOURCE CONTROL</span><span class="sub">WHERE THE MONEY CAME FROM</span></h3>
+        <div id="src-bars"></div>
+      </div>
+    </div>
+
+    <!-- row 4 -->
+    <div class="row r4">
+      <div class="panel">
+        <h3><span>DAILY GRID</span><span class="sub">DAY BY DAY · NEWEST RIGHT</span></h3>
+        <canvas id="ch-grid" class="chart"></canvas>
+      </div>
+      <div class="panel">
+        <h3><span>TOKEN FLOW</span><span class="sub">SOURCE → COST → MODEL</span></h3>
+        <div class="flow">
+          <div class="node" id="flow-src"></div>
+          <div class="spine"></div>
+          <div class="hub">$</div>
+          <div class="spine"></div>
+          <div class="node" id="flow-model"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- row 5 -->
+    <div class="row r5">
+      <div class="panel">
+        <h3><span>RECENT OPERATIONS</span><span class="sub">LAST 12 CALLS</span></h3>
+        <table class="grid" id="tbl-ops" style="overflow-y:auto; display:block; height:100%">
+          <thead><tr><th>TIME</th><th>MODEL</th><th>SOURCE</th><th>IN/OUT</th><th>CACHE</th><th>COST</th><th>STATUS</th></tr></thead>
+          <tbody></tbody>
+        </table>
+      </div>
+      <div class="panel">
+        <h3><span>COST RISK</span><span class="sub">BUDGET WATCH</span></h3>
+        <div class="risk">
+          <div class="meter"><canvas id="ch-risk"></canvas><div class="mid"><b id="risk-pct">0%</b><span>BUDGET USED</span></div></div>
+          <div class="lab" id="risk-lab">SOFT BUDGET $20 / MO</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h3><span>OBJECTIVES</span><span class="sub">STATUS</span></h3>
+        <div class="goal"><span><span class="ck">✓</span> TOKEN RECORDING</span><span class="bd done">COMPLETE</span></div>
+        <div class="goal"><span><span class="ck">✓</span> PROMPT CACHE</span><span class="bd go">ACTIVE</span></div>
+        <div class="goal"><span><span class="ck">✓</span> MONTH TRACKING</span><span class="bd done">COMPLETE</span></div>
+        <div class="goal"><span><span class="ck">◌</span> BUDGET WATCH</span><span class="bd go">IN PROGRESS</span></div>
+        <div class="goal"><span><span class="ck">◌</span> DAILY REVIEW</span><span class="bd wait">PENDING</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- footer -->
+  <div id="foot">
+    <span>
+      <span class="fitem">🔒 <span>ENCRYPTION</span> <b>AES-256</b></span> ·
+      <span class="fitem">📡 <span>CONNECTION</span> <b id="f-link">LOCAL</b></span> ·
+      <span class="fitem">👤 <span>USER</span> <b>OPERATOR</b></span> ·
+      <span class="fitem">★ <span>ACCESS</span> <b>LOCAL</b></span> ·
+      <span class="fitem">🖋 <span>TRACE</span> <b>AUDITED</b></span>
+    </span>
+    <span class="cmd" id="f-clock">&gt; KNOW YOUR BURN. STAY PROFITABLE. — —:—:— UTC</span>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* Emma — LLM Operations cost dashboard. Polls /api/system/usage (60s TTL). */
+
+const $ = (id) => document.getElementById(id);
+const GREEN = "#00ff9d", DIM = "rgba(0,255,157,0.35)", FAINT = "rgba(0,255,157,0.12)";
+const PALETTE = ["#00ff9d", "#7dffb0", "#00e5ff", "#b8ffea", "#ffe14d", "#ff7de8", "#7d9bff", "#5dff5d"];
+
+function fmtMoney(v) {
+  if (v == null || isNaN(v)) v = 0;
+  if (v >= 1000) return "$" + (v / 1000).toFixed(2) + "k";
+  if (v >= 1) return "$" + v.toFixed(2);
+  if (v >= 0.01) return "$" + v.toFixed(4);
+  return "$" + v.toFixed(6).replace(/0+$/, "").replace(/\.$/, ".0");
+}
+function fmtTokens(n) {
+  if (n == null) n = 0;
+  return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n);
+}
+function fmtTime(iso) {
+  const d = new Date(iso);
+  return d.toISOString().slice(11, 19) + " UTC";
+}
+
+/* ---------------- canvas helpers ---------------- */
+function prep(cv) {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = cv.clientWidth, h = cv.clientHeight;
+  if (w === 0 || h === 0) return null;
+  if (cv.width !== w * dpr || cv.height !== h * dpr) { cv.width = w * dpr; cv.height = h * dpr; }
+  const g = cv.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, w, h);
+  return { g, w, h };
+}
+function lineChart(cv, pts, opts = {}) {
+  const p = prep(cv); if (!p) return;
+  const { g, w, h } = p;
+  const pad = { l: 34, r: 8, t: 8, b: 14 };
+  const n = pts.length;
+  if (n < 2) {
+    g.fillStyle = DIM; g.font = "9px Inter"; g.textAlign = "center";
+    g.fillText(n ? "1 call" : "no data", w / 2, h / 2);
+    return;
+  }
+  const max = Math.max(...pts, 1e-9);
+  const X = (i) => pad.l + (i / (n - 1)) * (w - pad.l - pad.r);
+  const Y = (v) => h - pad.b - (v / max) * (h - pad.t - pad.b);
+  /* grid */
+  g.strokeStyle = FAINT; g.fillStyle = DIM; g.font = "8px Inter";
+  for (let gi = 0; gi <= 3; gi++) {
+    const y = pad.t + (gi / 3) * (h - pad.t - pad.b);
+    g.beginPath(); g.moveTo(pad.l, y); g.lineTo(w - pad.r, y); g.stroke();
+    g.fillStyle = DIM; g.textAlign = "right";
+    g.fillText(opts.fmt ? opts.fmt(max * (1 - gi / 3)) : fmtMoney(max * (1 - gi / 3)), pad.l - 4, y + 3);
+  }
+  /* area + line */
+  g.beginPath(); g.moveTo(X(0), Y(pts[0]));
+  for (let i = 1; i < n; i++) g.lineTo(X(i), Y(pts[i]));
+  g.strokeStyle = GREEN; g.lineWidth = 1.4; g.shadowColor = GREEN; g.shadowBlur = 6; g.stroke();
+  g.shadowBlur = 0;
+  g.lineTo(X(n - 1), h - pad.b); g.lineTo(X(0), h - pad.b); g.closePath();
+  g.fillStyle = "rgba(0,255,157,0.08)"; g.fill();
+  /* points */
+  for (let i = 0; i < n; i++) {
+    g.fillStyle = i === n - 1 ? "#b8ffea" : GREEN;
+    g.beginPath(); g.arc(X(i), Y(pts[i]), i === n - 1 ? 2.4 : 1.4, 0, 6.2832); g.fill();
+  }
+  g.fillStyle = DIM; g.font = "8px Inter"; g.textAlign = "center";
+  g.fillText(opts.xlabel || "", w / 2, h - 3);
+}
+function barChart(cv, vals, opts = {}) {
+  const p = prep(cv); if (!p) return;
+  const { g, w, h } = p;
+  const pad = { l: 30, r: 4, t: 6, b: 12 };
+  const n = vals.length;
+  if (!n) { g.fillStyle = DIM; g.font = "9px Inter"; g.textAlign = "center"; g.fillText("no data", w / 2, h / 2); return; }
+  const max = Math.max(...vals, 1e-9);
+  const bw = (w - pad.l - pad.r) / n;
+  for (let i = 0; i < n; i++) {
+    const bh = (vals[i] / max) * (h - pad.t - pad.b);
+    const x = pad.l + i * bw + bw * 0.22, y = h - pad.b - bh;
+    g.fillStyle = i === n - 1 ? "#b8ffea" : GREEN;
+    g.shadowColor = GREEN; g.shadowBlur = 6;
+    g.fillRect(x, y, bw * 0.56, bh);
+    g.shadowBlur = 0;
+    g.fillStyle = DIM; g.font = "8px Inter"; g.textAlign = "center";
+    g.fillText(opts.labels && opts.labels[i] || "", pad.l + i * bw + bw / 2, h - 2);
+  }
+}
+function donut(cv, parts, total) {
+  const p = prep(cv); if (!p) return;
+  const { g, w, h } = p;
+  const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 4;
+  if (!parts.length) {
+    g.strokeStyle = FAINT; g.lineWidth = 8;
+    g.beginPath(); g.arc(cx, cy, r - 4, 0, 6.2832); g.stroke();
+    return;
+  }
+  let a0 = -Math.PI / 2;
+  parts.forEach((pt, i) => {
+    const a1 = a0 + (pt / total) * Math.PI * 2;
+    g.beginPath(); g.arc(cx, cy, r - 4, a0, a1);
+    g.strokeStyle = PALETTE[i % PALETTE.length]; g.lineWidth = 9;
+    g.shadowColor = PALETTE[i % PALETTE.length]; g.shadowBlur = 8; g.stroke();
+    g.shadowBlur = 0;
+    a0 = a1;
+  });
+  g.strokeStyle = DIM; g.lineWidth = 1;
+  g.beginPath(); g.arc(cx, cy, r - 10, 0, 6.2832); g.stroke();
+}
+function dial(cv, pct, color) {
+  const p = prep(cv); if (!p) return;
+  const { g, w, h } = p;
+  const cx = w / 2, cy = h / 2 + 2, r = Math.min(w, h) / 2 - 5;
+  g.strokeStyle = FAINT; g.lineWidth = 4;
+  g.beginPath(); g.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 2.25); g.stroke();
+  g.strokeStyle = color || GREEN; g.lineWidth = 4; g.shadowColor = color || GREEN; g.shadowBlur = 6;
+  g.beginPath(); g.arc(cx, cy, r, Math.PI * 0.75, Math.PI * 0.75 + Math.PI * 1.5 * pct); g.stroke();
+  g.shadowBlur = 0;
+  g.fillStyle = "#b8ffea"; g.font = "600 11px Orbitron"; g.textAlign = "center";
+  g.fillText(Math.round(pct * 100) + "%", cx, cy + 1);
+}
+function ringMeter(cv, pct) {
+  const p = prep(cv); if (!p) return;
+  const { g, w, h } = p;
+  const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 3;
+  g.strokeStyle = FAINT; g.lineWidth = 7;
+  g.beginPath(); g.arc(cx, cy, r, 0, 6.2832); g.stroke();
+  g.strokeStyle = pct > 0.8 ? "#ff5c5c" : GREEN; g.lineWidth = 7; g.shadowColor = GREEN; g.shadowBlur = 8;
+  g.beginPath(); g.arc(cx, cy, r, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * pct); g.stroke();
+  g.shadowBlur = 0;
+  g.fillStyle = pct > 0.8 ? "#ff5c5c" : "#b8ffea";
+  g.font = "700 13px Orbitron"; g.textAlign = "center";
+  g.fillText(Math.round(pct * 100) + "%", cx, cy + 4);
+}
+function globe(cv, t, label) {
+  const p = prep(cv); if (!p) return;
+  const { g, w, h } = p;
+  const cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 4;
+  g.strokeStyle = DIM; g.lineWidth = 1;
+  for (let i = -6; i <= 6; i++) {          /* latitude rings */
+    const lat = i / 6 * Math.PI / 2;
+    g.beginPath();
+    for (let j = 0; j <= 48; j++) {
+      const lng = j / 48 * Math.PI * 2 + t * 0.15;
+      const x = cx + Math.cos(lng) * Math.cos(lat) * r;
+      const y = cy + Math.sin(lat) * r;
+      j === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  for (let i = 0; i < 12; i++) {           /* longitude rings */
+    const lng = i / 12 * Math.PI * 2 + t * 0.15;
+    g.beginPath();
+    for (let j = 0; j <= 48; j++) {
+      const lat = -Math.PI / 2 + j / 48 * Math.PI;
+      const x = cx + Math.cos(lng) * Math.cos(lat) * r;
+      const y = cy + Math.sin(lat) * r;
+      j === 0 ? g.moveTo(x, y) : g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+  /* glowing nodes */
+  for (let i = 0; i < 14; i++) {
+    const lat = (i * 2.399 - 3) / 5 * Math.PI / 2;
+    const lng = i * 1.7 + t * 0.15;
+    const x = cx + Math.cos(lng) * Math.cos(lat) * r;
+    const y = cy + Math.sin(lat) * r;
+    g.fillStyle = i % 2 ? GREEN : "#b8ffea";
+    g.shadowColor = GREEN; g.shadowBlur = 5;
+    g.beginPath(); g.arc(x, y, 1.6, 0, 6.2832); g.fill();
+    g.shadowBlur = 0;
+  }
+  g.fillStyle = DIM; g.font = "7px Inter"; g.textAlign = "center";
+  g.fillText(label || "", cx, h - 2);
+}
+
+/* ---------------- state ---------------- */
+let DATA = null;   /* zeroed placeholder */
+function zero() {
+  return { month: 0, today: 0, delta_pct: 0, calls: 0, input_tokens: 0, output_tokens: 0,
+    cache_read_tokens: 0, cache_savings_usd: 0, per_model: [], per_day: [], per_source: [], recent: [] };
+}
+
+async function poll() {
+  try {
+    const r = await fetch("/api/system/usage", { signal: AbortSignal.timeout(6000) });
+    if (!r.ok) throw new Error("http " + r.status);
+    DATA = await r.json();
+    document.getElementById("sys-status").classList.remove("off");
+    document.getElementById("f-link").textContent = "API LINK";
+  } catch (e) {
+    DATA = DATA || zero();
+    document.getElementById("sys-status").classList.add("off");
+    document.getElementById("f-link").textContent = "OFFLINE";
+  }
+  render();
+}
+
+const BUDGET = 20; /* soft monthly budget in USD — tweak freely */
+
+function render() {
+  const d = DATA || zero();
+
+  /* header metrics */
+  $("p1-sub").textContent = fmtTokens(d.input_tokens) + " IN · " + fmtTokens(d.output_tokens) + " OUT";
+  $("m-calls").textContent = String(d.calls);
+  $("m-route").textContent = "HYBRID";
+  $("m-cache").textContent = "AUTO · 50%";
+  $("m-record").textContent = "LIVE";
+  $("m-risk").textContent = d.month > BUDGET * 0.8 ? "ELEVATED" : "LOW";
+
+  /* month / today */
+  $("v-month").innerHTML = fmtMoney(d.month) + (d.month >= 1 ? "" : " <small>USD</small>");
+  const del = $("d-month");
+  const dp = d.delta_pct || 0;
+  del.className = "delta " + (Math.abs(dp) < 0.05 ? "flat" : dp > 0 ? "up" : "down");
+  del.textContent = (dp > 0 ? "▲" : dp < 0 ? "▼" : "◆") + " " + (dp > 0 ? "+" : "") + dp.toFixed(1) + "% MoM";
+  del.title = "vs the same length of the previous month — for spend, up is the bad direction";
+  $("v-today").innerHTML = fmtMoney(d.today);
+  $("t-cache").textContent = "cache saved " + fmtMoney(d.cache_savings_usd) + " this month";
+
+  /* month cumulative line */
+  const days = d.per_day.slice().reverse();  /* oldest → newest */
+  const cum = [];
+  let acc = 0;
+  for (const day of days) { acc += day.cost_usd; cum.push(acc); }
+  lineChart($("ch-month"), cum, { fmt: fmtMoney, xlabel: days.length ? days[days.length - 1].date : "" });
+
+  /* today: last 7 days bars */
+  const last7 = days.slice(-7);
+  barChart($("ch-today"), last7.map((x) => x.cost_usd), { labels: last7.map((x) => x.date.slice(8)) });
+
+  /* burn index — per-day bars, newest last */
+  barChart($("ch-burn"), days.map((x) => x.cost_usd), { labels: days.map((x) => x.date.slice(5)) });
+
+  /* dials — per-model cost share */
+  const total = d.month || 1e-9;
+  const dm = d.per_model;
+  const dials = $("dials");
+  dials.innerHTML = "";
+  if (!dm.length) dials.innerHTML = '<div class="empty-note">no calls yet — talk to Emma</div>';
+  dm.slice(0, 5).forEach((m, i) => {
+    const wrap = document.createElement("div");
+    wrap.style.cssText = "display:flex;flex-direction:column;align-items:center;gap:4px;flex:1;min-width:0";
+    const cv = document.createElement("canvas");
+    cv.className = "chart"; cv.style.height = "62%";
+    wrap.appendChild(cv);
+    const lab = document.createElement("div");
+    lab.style.cssText = "font-family:Orbitron,monospace;font-size:7px;letter-spacing:0.1em;color:var(--grn-dim);text-align:center;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
+    lab.textContent = m.model.split(":")[0].toUpperCase();
+    wrap.appendChild(lab);
+    dials.appendChild(wrap);
+    requestAnimationFrame(() => dial(cv, m.cost_usd / total, PALETTE[i % PALETTE.length]));
+  });
+
+  /* donut + legend */
+  donut($("ch-donut"), dm.map((m) => m.cost_usd), total);
+  const lg = $("donut-legend");
+  lg.innerHTML = dm.length ? "" : '<div class="empty-note">no data</div>';
+  dm.slice(0, 7).forEach((m, i) => {
+    const li = document.createElement("div");
+    li.className = "li";
+    li.innerHTML = '<span class="sw" style="background:' + PALETTE[i % PALETTE.length] + ';color:' + PALETTE[i % PALETTE.length] + '"></span>' +
+      "<span style='overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:92px'>" + m.model + "</span>" +
+      '<span class="p">' + (m.cost_usd / total * 100).toFixed(1) + '%</span>';
+    lg.appendChild(li);
+  });
+
+  /* top spenders table */
+  const tb = $("tbl-spenders").querySelector("tbody");
+  tb.innerHTML = "";
+  if (!dm.length) tb.innerHTML = '<tr><td colspan="5" class="dim">no calls recorded yet</td></tr>';
+  dm.slice(0, 6).forEach((m) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td class='mono'>" + m.model + "</td>" +
+      "<td>" + fmtTokens(m.input_tokens) + "</td>" +
+      "<td>" + fmtTokens(m.output_tokens) + "</td>" +
+      "<td>" + fmtTokens(m.cache_read_tokens) + "</td>" +
+      "<td class='ok'>" + fmtMoney(m.cost_usd) + "</td>";
+    tb.appendChild(tr);
+  });
+
+  /* source control bars */
+  const sb = $("src-bars");
+  sb.innerHTML = "";
+  const srcs = d.per_source.length ? d.per_source : [{ source: "conversation", cost_usd: 0, calls: 0 }];
+  const srcTotal = d.month || 1e-9;
+  srcs.slice(0, 6).forEach((s) => {
+    const row = document.createElement("div");
+    row.className = "bar-row";
+    row.innerHTML = '<span class="lbl">' + s.source.toUpperCase() + '</span>' +
+      '<span class="track"><span class="fill" style="width:0%"></span></span>' +
+      '<span class="pct">' + (s.cost_usd / srcTotal * 100).toFixed(0) + '%</span>';
+    sb.appendChild(row);
+    requestAnimationFrame(() => { row.querySelector(".fill").style.width = (s.cost_usd / srcTotal * 100).toFixed(1) + "%"; });
+  });
+
+  /* daily grid — heat bars across the month */
+  {
+    const cv = $("ch-grid"); const p = prep(cv);
+    if (p) {
+      const { g, w, h } = p;
+      const n = days.length;
+      g.fillStyle = DIM; g.font = "8px Inter"; g.textAlign = "left";
+      g.fillText("cost by day", 2, 9);
+      if (!n) { g.fillStyle = DIM; g.textAlign = "center"; g.fillText("no data", w / 2, h / 2); }
+      const max = Math.max(...days.map((x) => x.cost_usd), 1e-9);
+      const bw = (w - 4) / Math.max(n, 1);
+      days.forEach((day, i) => {
+        const bh = Math.max(2, (day.cost_usd / max) * (h - 20));
+        const col = day.cost_usd > max * 0.7 ? "#b8ffea" : GREEN;
+        g.fillStyle = col; g.shadowColor = GREEN; g.shadowBlur = 4;
+        g.fillRect(2 + i * bw, h - bh, Math.max(1, bw * 0.7), bh);
+        g.shadowBlur = 0;
+      });
+    }
+  }
+
+  /* token flow — source node + model node */
+  {
+    const top = dm[0];
+    $("flow-src").innerHTML = '<span class="ico hot">◉</span><span>' + (srcs[0] ? srcs[0].source.toUpperCase() : "CONVERSATION") + "</span>";
+    $("flow-model").innerHTML = '<span class="ico hot">◈</span><span>' + (top ? top.model.split(":")[0].toUpperCase() : "—") + "</span>";
+  }
+
+  /* recent operations */
+  const op = $("tbl-ops").querySelector("tbody");
+  op.innerHTML = "";
+  if (!d.recent.length) op.innerHTML = '<tr><td colspan="7" class="dim">no calls recorded — every LLM call is captured automatically</td></tr>';
+  d.recent.slice(0, 12).forEach((r) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = "<td class='mono dim'>" + fmtTime(r.ts) + "</td>" +
+      "<td class='mono'>" + r.model + "</td>" +
+      "<td class='dim'>" + (r.source || "conversation") + "</td>" +
+      "<td>" + fmtTokens(r.input_tokens) + " / " + fmtTokens(r.output_tokens) + "</td>" +
+      "<td>" + fmtTokens(r.cache_read_tokens) + "</td>" +
+      "<td class='ok'>" + fmtMoney(r.cost_usd) + "</td>" +
+      "<td class='ok'>OK</td>";
+    op.appendChild(tr);
+  });
+
+  /* cost risk meter */
+  const riskPct = Math.min(1, d.month / BUDGET);
+  ringMeter($("ch-risk"), riskPct);
+  $("risk-pct").textContent = Math.round(riskPct * 100) + "%";
+  $("risk-lab").textContent = "SOFT BUDGET $" + BUDGET + " / MO · " + fmtMoney(d.month) + " USED";
+
+  /* small header globe */
+  globe($("globe-sm"), performance.now() / 1000, "");
+  globe($("globe-lg"), performance.now() / 1000, "USAGE GRID");
+}
+
+/* ---------------- loop ---------------- */
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (document.hidden) return;
+  globe($("globe-sm"), now / 1000, "");
+  globe($("globe-lg"), now / 1000, "USAGE GRID");
+  $("f-clock").textContent = "> KNOW YOUR BURN. STAY PROFITABLE. — " + new Date().toISOString().slice(11, 19) + " UTC";
+}
+poll();
+setInterval(poll, 60000);
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
