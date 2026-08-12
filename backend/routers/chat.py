@@ -20,7 +20,8 @@ from agents.router import Pipeline
 try:
     import orjson
     def json_dumps(obj):
-        return orjson.dumps(obj, default=str)
+        # orjson.dumps returns bytes — decode so the SSE data: line is valid JSON.
+        return orjson.dumps(obj, default=str).decode("utf-8")
 except ImportError:
     json_dumps = json.dumps
 

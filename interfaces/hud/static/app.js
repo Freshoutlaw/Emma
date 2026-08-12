@@ -35,6 +35,28 @@ let currentFetchAbort = null;
 const audioEl = new Audio();
 audioEl.preload = "auto";
 
+// Browsers block audio with sound until the user has interacted with the
+// page. Emma often speaks without a click (auto-listening), so prime the
+// element inside the first real gesture — after that, play() is allowed.
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  try {
+    audioEl.muted = true;
+    const p = audioEl.play();
+    if (p && typeof p.catch === "function") {
+      p.then(() => { audioEl.pause(); audioEl.currentTime = 0; audioEl.muted = false; })
+       .catch(() => { audioEl.muted = false; });
+    } else {
+      audioEl.muted = false;
+    }
+  } catch (_) { audioEl.muted = false; }
+}
+document.addEventListener("pointerdown", unlockAudio, { once: true });
+document.addEventListener("keydown", unlockAudio, { once: true });
+document.addEventListener("touchstart", unlockAudio, { once: true });
+
 // ---------------------------------------------------------------- helpers
 function addLine(text, cls) {
   const line = document.createElement("div");
@@ -408,6 +430,15 @@ function handleEvent(event) {
         }
       }
       finishReplyLine();
+      // Show which model actually answered this turn, e.g. "[via gemma4:31b-cloud]"
+      // or "[via local qwen3.5:2b fallback]" when the cloud quota ran out.
+      if (event.served_by) {
+        const sb = event.served_by;
+        const label = sb.provider === "local"
+          ? "local " + sb.model + " fallback"
+          : sb.model;
+        addLine("[via " + label + "]", "meta");
+      }
       break;
   }
 }
@@ -466,6 +497,9 @@ function pumpQueue() {
   playSegmentAudio(seg.turn_id).catch((err) => {
     if (err && err.name === "AbortError") return;
     console.error("segment playback failed", err);
+    if (err && err.name === "NotAllowedError") {
+      addLine("🔇 Emma's voice is muted by the browser — click anywhere on the page to enable sound.", "meta");
+    }
     onSegmentEnded();
   });
 }

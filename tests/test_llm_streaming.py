@@ -383,3 +383,48 @@ def test_local_stream_closes_response_after_chunk_timeout(monkeypatch):
     raised, closed = asyncio.run(run())
     assert raised is True, "stall must surface TimeoutError"
     assert closed is True, "the timed-out worker must close the response"
+
+
+def test_local_stream_raises_on_ollama_http200_error_body(monkeypatch):
+    """Ollama surfaces subscription/rate-limit failures in STREAMING responses
+    as an HTTP 200 body {\"error\": ...}. The stream must RAISE (so the router
+    can fall back to the local model) instead of silently yielding nothing."""
+    import pytest
+
+    lines = [
+        '{"error": "this model requires a subscription, upgrade for access: https://ollama.com/upgrade (ref: abc123)"}',
+    ]
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None  # HTTP 200 — the error lives in the body, not the status
+
+        def iter_lines(self):
+            return iter(lines)
+
+    class FakeCM:
+        def __enter__(self):
+            return FakeResponse()
+
+        def __exit__(self, *exc):
+            return False
+
+    class FakeClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def stream(self, method, url, **kwargs):
+            return FakeCM()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("llm.local.httpx.Client", FakeClient)
+    llm = LocalLLM()
+
+    async def run():
+        with pytest.raises(RuntimeError, match="requires a subscription"):
+            await _collect(llm.stream([{"role": "user", "content": "hi"}]))
+        await llm.close()
+
+    asyncio.run(run())

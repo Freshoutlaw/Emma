@@ -67,6 +67,12 @@ AGENT_BUDGETS: dict[str, FailureBudget] = {
     # Control agent — tool execution failures are expected (permission
     # denied, file not found), so give it a generous budget.
     "control": FailureBudget(max_failures=10, window_seconds=300, cooldown_seconds=30),
+    # Ollama Cloud LLM provider: when the cloud quota/subscription fails,
+    # every turn otherwise pays the failed attempt before falling back to
+    # the local model. After a few consecutive failures the circuit opens
+    # and the cloud attempt is skipped entirely for the cooldown period;
+    # a probe call then retries and closes the circuit on success.
+    "ollama_cloud": FailureBudget(max_failures=3, window_seconds=120, cooldown_seconds=60),
 }
 
 

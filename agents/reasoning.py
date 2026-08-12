@@ -128,6 +128,15 @@ class ReasoningAgent(BaseAgent):
 
     # ---------------------------------------------------------------- planning
     async def plan(self, request: str, context: str = "") -> list[dict]:
+        # Small-talk fast path: short conversational messages skip the LLM
+        # plan round trip entirely.  The plan prompt carries the whole tool
+        # catalog, and on the CPU-only local model that single call measured
+        # ~45s (hitting its own timeout) for a greeting — a casual question
+        # must not pay for planning.  The deterministic keyword planner below
+        # still catches the tool-able short commands, and keyword_intent() has
+        # already routed map/control/memory-style requests away by this point.
+        if len(request.split()) <= 5:
+            return self.keyword_plan(request)
         try:
             messages = [
                 {"role": "system", "content": self._system_prompt()},
@@ -147,7 +156,7 @@ class ReasoningAgent(BaseAgent):
             return []  # fall back to the keyword planner
 
     # ---------------------------------------------------------------- fallback
-    def _keyword_plan(self, message: str) -> list[dict]:
+    def keyword_plan(self, message: str) -> list[dict]:
         """Deterministic tool plan for common verb patterns.
 
         Used when the LLM returns no plan (weak/slow local models that ramble
@@ -176,7 +185,7 @@ class ReasoningAgent(BaseAgent):
         context = await self.pipeline.rag.augment(request, k=4)
         steps = await self.plan(request, context)
         if not steps:
-            steps = self._keyword_plan(request)
+            steps = self.keyword_plan(request)
         steps = steps[: self.max_plan_steps]  # defense in depth: bound the loop itself
         actions: list[dict] = []
         outputs: list[str] = []

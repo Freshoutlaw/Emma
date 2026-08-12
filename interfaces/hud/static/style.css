@@ -32,13 +32,14 @@ body::before { top: 10px; left: 10px; border-top: 2px solid rgba(0, 242, 254, 0.
 body::after { bottom: 10px; right: 10px; border-bottom: 2px solid rgba(0, 242, 254, 0.5); border-right: 2px solid rgba(0, 242, 254, 0.5); }
 
 /* ---------- The AI core (center stage) ---------- */
+/* Sized to fit entirely above the terminal slot — the chat never covers Emma. */
 .nexus-container {
   position: fixed;
-  top: 50%;
   left: 50%;
+  top: calc((100vh - 280px) / 2);
   transform: translate(-50%, -50%);
-  width: min(80vh, 80vw);
-  height: min(80vh, 80vw);
+  width: min(58vh, 78vw, calc(100vh - 300px));
+  height: min(58vh, 78vw, calc(100vh - 300px));
   z-index: 5;
   display: flex;
   justify-content: center;
@@ -124,7 +125,7 @@ body::after { bottom: 10px; right: 10px; border-bottom: 2px solid rgba(0, 242, 2
 .terminal-slot::after { bottom: -1px; right: -1px; border-bottom: 2px solid var(--cyan); border-right: 2px solid var(--cyan); }
 
 .terminal-log {
-  max-height: 140px;
+  max-height: 110px;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -436,6 +437,17 @@ body::after { bottom: 10px; right: 10px; border-bottom: 2px solid rgba(0, 242, 2
   width: 100%;
   border: 0;
   background: #030812;
+}
+
+/* ---------- Short screens: keep Emma above the chat ---------- */
+@media (max-height: 700px) {
+  .nexus-container {
+    top: calc((100vh - 230px) / 2);
+    width: min(48vh, 72vw, calc(100vh - 250px));
+    height: min(48vh, 72vw, calc(100vh - 250px));
+  }
+  .terminal-slot { bottom: 12px; }
+  .terminal-log { max-height: 84px; }
 }
 
 /* ---------- Consent banner ---------- */

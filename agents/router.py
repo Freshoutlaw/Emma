@@ -22,6 +22,7 @@ from typing import Any, AsyncIterator, Optional
 from functools import lru_cache
 
 from backend.speak_pipeline import SpeakPipeline
+from performance.turn_metrics import turn_metrics
 
 from agents.base import AgentResult
 from agents.control import ControlAgent, ToolNotAllowedError, UnknownToolError
@@ -197,7 +198,11 @@ class Pipeline:
             groq_api_key=settings.groq_api_key,
             local_model=settings.local_model,
             cloud_model=settings.cloud_model,
+            ollama_cloud_model=settings.ollama_cloud_model,
             domain=getattr(settings, 'domain', 'localhost'),
+            num_ctx=getattr(settings, 'ollama_num_ctx', None),
+            num_gpu=getattr(settings, 'ollama_num_gpu', None),
+            keep_alive=getattr(settings, 'ollama_keep_alive', None),
         )
         self.embedder = Embedder(settings.ollama_url, settings.embedding_model, settings.embedding_dim)
 
@@ -277,6 +282,8 @@ class Pipeline:
             await self.embedder.close()
         if hasattr(self.llm, 'local') and hasattr(self.llm.local, 'close'):
             await self.llm.local.close()
+        if hasattr(self.llm, 'ollama_cloud') and self.llm.ollama_cloud is not None:
+            await self.llm.ollama_cloud.close()
         if hasattr(self, 'episodic') and hasattr(self.episodic, 'close'):
             await self.episodic.close()
         await self.stt.close()
@@ -306,12 +313,14 @@ class AgentRouter:
         # any tool detection, and this saves a full LLM round trip per turn
         # while avoiding the clarify-on-chat prompt for e.g. "hello world".
         if keyword == "reasoning" and len(message.split()) <= 5:
+            turn_metrics.record_classify(fast_path=True)
             return {"intent": "reasoning", "tool": None, "args": {}}
 
         # Tier 1 routing policy: try LLM for ambiguous (keyword == reasoning),
         # then apply policy (decomposition, tiebreak, clarify).
         llm_result = None
         if keyword == "reasoning" and self.pipeline.llm.route() != "none":
+            turn_metrics.record_classify(fast_path=False)
             try:
                 text = await asyncio.wait_for(
                     self.pipeline.llm.complete(
@@ -409,7 +418,9 @@ class AgentRouter:
     # ---------------------------------------------------------------- run
     async def run(self, message: str, session_id: Optional[str] = None) -> AgentResult:
         self.pipeline.audit.log("chat.incoming", action="chat", actor="user", detail={"message": message[:500], "session": session_id})
+        start = time.perf_counter()
         result = await self.dispatch(message)
+        turn_metrics.record_turn(result.intent, time.perf_counter() - start)
         # Tier 3: record success/failure for circuit breaker.
         if result.ok:
             failure_isolation.record_success(result.intent)
@@ -431,10 +442,13 @@ class AgentRouter:
         return result
 
     # ---------------------------------------------------------------- stream
-    async def stream(self, message: str) -> AsyncIterator[dict]:
+    async def _stream_inner(self, message: str) -> AsyncIterator[dict]:
         """Yield SSE-style event dicts: token / action / consent / memory / done."""
         classification = await self.classify(message)
         intent = classification.get("intent", "reasoning")
+        # Fresh per turn: the HUD shows which model actually served the reply
+        # ("[via gemma4:31b-cloud]" vs "[via local qwen3.5:2b fallback]").
+        self.pipeline.llm.last_served = None
 
         if intent in ("chat", "reasoning"):
             context = await self.pipeline.rag.augment(message, k=4)
@@ -518,7 +532,7 @@ class AgentRouter:
                 decision={"ok": stream_ok},
                 detail={"output": text[:500], "error": stream_error},
             )
-            yield {"type": "done", "result": result.to_dict()}
+            yield {"type": "done", "result": result.to_dict(), "served_by": self.pipeline.llm.last_served}
             return
 
         if intent == "map":
@@ -555,3 +569,22 @@ class AgentRouter:
             yield {"type": "handoff", "proposal": proposal.to_dict()}
 
         yield {"type": "done", "result": result.to_dict()}
+
+    # ---------------------------------------------------------------- stream
+    async def stream(self, message: str) -> AsyncIterator[dict]:
+        """Yield SSE-style event dicts: token / action / consent / memory / done.
+
+        Thin wrapper over _stream_inner: times the whole turn so per-turn
+        latency and intent land in /api/performance no matter which branch
+        finishes it (done, consent, or an abandoned stream).
+        """
+        start = time.perf_counter()
+        intent = "incomplete"
+        try:
+            async for event in self._stream_inner(message):
+                if event.get("type") == "done":
+                    result = event.get("result") or {}
+                    intent = result.get("intent") or intent
+                yield event
+        finally:
+            turn_metrics.record_turn(intent, time.perf_counter() - start)

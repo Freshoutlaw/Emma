@@ -5,6 +5,8 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
+from performance.turn_metrics import turn_metrics
+
 router = APIRouter(prefix="/api/performance", tags=["performance"])
 
 
@@ -52,6 +54,7 @@ async def get_performance_stats(request: Request):
     summary = monitor.get_metrics_summary()
     if isinstance(summary, dict):
         summary["embedder"] = _get_embedder_stats(request)
+        summary["turns"] = turn_metrics.snapshot()
     return summary
 
 
@@ -107,4 +110,5 @@ async def clear_metrics(request: Request):
         )
     
     monitor.clear()
+    turn_metrics.reset()
     return {"status": "cleared"}

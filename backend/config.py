@@ -46,9 +46,22 @@ class Settings(BaseSettings):
     deepgram_tts_voice: str = "aura-asteria-en"
     ollama_url: str = "http://localhost:11434"
     local_model: str = "qwen3:5.4b"
+    # Ollama Cloud model (e.g. "gpt-oss:120b-cloud") — proxied to ollama.com
+    # by the local Ollama binary.  When set, it is tried FIRST and the local
+    # model above is the fallback for when the cloud quota/rate-limit runs out.
+    ollama_cloud_model: Optional[str] = None  # EMMA_OLLAMA_CLOUD_MODEL
     cloud_model: str = "llama-3.3-70b-versatile"
     embedding_model: str = "nomic-embed-text"
     embedding_dim: int = 384
+
+    # --- Ollama memory footprint (None = let Ollama use its server defaults)
+    # On memory-constrained boxes (e.g. 8 GiB with editors running), cap the
+    # KV cache (num_ctx), force CPU-only (num_gpu=0), and shorten keep_alive
+    # so the model unloads sooner after a turn.  Env: EMMA_OLLAMA_NUM_CTX /
+    # EMMA_OLLAMA_NUM_GPU / EMMA_OLLAMA_KEEP_ALIVE.
+    ollama_num_ctx: Optional[int] = None
+    ollama_num_gpu: Optional[int] = None
+    ollama_keep_alive: Optional[int] = None
 
     # --- security
     consent_mode: str = "once"      # auto | once | strict

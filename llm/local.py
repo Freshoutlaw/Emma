@@ -32,6 +32,9 @@ class LocalLLM:
         request_timeout: float = 300.0,
         chunk_timeout: float = 30.0,
         first_chunk_timeout: float = 120.0,
+        num_ctx: Optional[int] = None,
+        num_gpu: Optional[int] = None,
+        keep_alive: Optional[int] = None,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
@@ -43,6 +46,12 @@ class LocalLLM:
         # load happens before the first token (measured 11-15s on this box).
         self.chunk_timeout = chunk_timeout
         self.first_chunk_timeout = first_chunk_timeout
+        # Ollama memory-footprint knobs — None means "let Ollama use its
+        # server defaults" (num_ctx default is 4096, keep_alive 5m).  On
+        # memory-constrained boxes these cap the KV cache and unload sooner.
+        self.num_ctx = num_ctx
+        self.num_gpu = num_gpu
+        self.keep_alive = keep_alive
         # Use connection pooling for better performance
         self._client: Optional[httpx.Client] = None
         self._async_client: Optional[httpx.AsyncClient] = None
@@ -81,7 +90,17 @@ class LocalLLM:
 
     # ---------------------------------------------------------------- chat
     def _payload(self, messages: list[dict], temperature: float, max_tokens: int, stream: bool) -> dict[str, Any]:
-        return {
+        options = {
+            "temperature": temperature,
+            "num_predict": max_tokens,
+        }
+        # Memory-footprint knobs: only sent when configured, so the default
+        # behavior (server defaults) is unchanged everywhere else.
+        if self.num_ctx is not None:
+            options["num_ctx"] = self.num_ctx
+        if self.num_gpu is not None:
+            options["num_gpu"] = self.num_gpu
+        payload = {
             "model": self.model,
             "messages": messages,
             "stream": stream,
@@ -89,11 +108,11 @@ class LocalLLM:
             # slows responses and can exhaust max_tokens before any answer is
             # produced. Turn the thinking pass off for direct, fast replies.
             "think": False,
-            "options": {
-                "temperature": temperature,
-                "num_predict": max_tokens,
-            },
+            "options": options,
         }
+        if self.keep_alive is not None:
+            payload["keep_alive"] = self.keep_alive
+        return payload
 
     async def complete(self, messages: list[dict], temperature: float = 0.7, max_tokens: int = 4096, model: Optional[str] = None) -> str:
         payload = self._payload(messages, temperature, max_tokens, stream=False)
@@ -102,6 +121,12 @@ class LocalLLM:
         response = await client.post(f"{self.base_url}/api/chat", json=payload)
         response.raise_for_status()
         data = response.json()
+        # Ollama surfaces failures (subscription/rate-limit/quota on :cloud
+        # models, unknown models, …) as HTTP 200 with an "error" field.
+        # Turn that into an exception so the router can fall back instead of
+        # silently returning an empty reply.
+        if data.get("error"):
+            raise RuntimeError(f"Ollama error: {data['error']}")
         # cost dashboard — best-effort capture, never breaks the turn
         record_usage(data.get("model") or payload["model"], data)
         message = data.get("message") or {}
@@ -142,10 +167,20 @@ class LocalLLM:
                     except Exception:
                         import json as _json
                         chunk = _json.loads(line)
+                    # Ollama error bodies arrive as HTTP 200 with an "error"
+                    # field (subscription/rate-limit/quota on :cloud models,
+                    # unknown model, …).  Raise so the router can fall back
+                    # to the local model instead of streaming nothing.
+                    if chunk.get("error"):
+                        raise RuntimeError(f"Ollama error: {chunk['error']}")
                     message = chunk.get("message") or {}
+                    # Modern Ollama honors `think: false` and streams the
+                    # model's reasoning into the `thinking` field with an
+                    # EMPTY `content` until the answer starts.  Surfacing
+                    # that reasoning as content (the old fallback for builds
+                    # that ignored `think`) made gpt-oss cloud narrate its
+                    # internal monologue aloud — so only stream real content.
                     content = message.get("content", "")
-                    if not content:
-                        content = message.get("thinking", "")
                     if content:
                         yield content
                     if chunk.get("done"):
