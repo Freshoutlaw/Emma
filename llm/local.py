@@ -30,13 +30,22 @@ class LocalLLM:
         model: str = "qwen3:5.4b",
         ping_timeout: float = 2.0,
         request_timeout: float = 300.0,
+        chunk_timeout: float = 30.0,
+        first_chunk_timeout: float = 120.0,
     ) -> None:
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.ping_timeout = ping_timeout
         self.request_timeout = request_timeout
+        # Per-chunk ceiling for streamed responses: a stalled Ollama surfaces
+        # an error here instead of blocking a read for the full request_timeout.
+        # The FIRST chunk gets its own larger allowance because a cold model
+        # load happens before the first token (measured 11-15s on this box).
+        self.chunk_timeout = chunk_timeout
+        self.first_chunk_timeout = first_chunk_timeout
         # Use connection pooling for better performance
         self._client: Optional[httpx.Client] = None
+        self._async_client: Optional[httpx.AsyncClient] = None
         
     def _get_client(self, timeout: Optional[float] = None) -> httpx.Client:
         """Get or create a pooled HTTP client."""
@@ -46,6 +55,15 @@ class LocalLLM:
                 limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
             )
         return self._client
+
+    def _get_async_client(self) -> httpx.AsyncClient:
+        """Get or create a pooled ASYNC HTTP client."""
+        if self._async_client is None:
+            self._async_client = httpx.AsyncClient(
+                timeout=self.request_timeout,
+                limits=httpx.Limits(max_keepalive_connections=5, max_connections=10)
+            )
+        return self._async_client
 
     # ---------------------------------------------------------------- health
     def available_models(self) -> list[str]:
@@ -77,11 +95,11 @@ class LocalLLM:
             },
         }
 
-    def complete(self, messages: list[dict], temperature: float = 0.7, max_tokens: int = 4096, model: Optional[str] = None) -> str:
+    async def complete(self, messages: list[dict], temperature: float = 0.7, max_tokens: int = 4096, model: Optional[str] = None) -> str:
         payload = self._payload(messages, temperature, max_tokens, stream=False)
         payload["model"] = model or self.model
-        client = self._get_client()
-        response = client.post(f"{self.base_url}/api/chat", json=payload)
+        client = self._get_async_client()
+        response = await client.post(f"{self.base_url}/api/chat", json=payload)
         response.raise_for_status()
         data = response.json()
         # cost dashboard — best-effort capture, never breaks the turn
@@ -97,13 +115,24 @@ class LocalLLM:
     async def stream(self, messages: list[dict], temperature: float = 0.7, max_tokens: int = 4096, model: Optional[str] = None) -> AsyncIterator[str]:
         """Stream using synchronous client wrapped in async generator."""
         import asyncio
+        import threading
         
         payload = self._payload(messages, temperature, max_tokens, stream=True)
         payload["model"] = model or self.model
         client = self._get_client()
         
         def sync_stream():
-            with client.stream("POST", f"{self.base_url}/api/chat", json=payload) as response:
+            # The stream request carries its own read timeout (the larger
+            # first-chunk allowance) so the executor thread unblocks in
+            # bounded time when the server stalls, instead of waiting out
+            # request_timeout (300s).  A cold model load counts against the
+            # first read, hence the generous ceiling here.
+            with client.stream(
+                "POST",
+                f"{self.base_url}/api/chat",
+                json=payload,
+                timeout=httpx.Timeout(self.first_chunk_timeout),
+            ) as response:
                 response.raise_for_status()
                 for line in response.iter_lines():
                     if not line.strip():
@@ -132,18 +161,61 @@ class LocalLLM:
         loop = asyncio.get_running_loop()
         gen = sync_stream()
         done = object()
+        # Set when the async consumer stops iterating (error, timeout, or an
+        # early aclose).  The worker thread checks it after each next(gen) so
+        # the sync generator is closed by the thread that owns its execution —
+        # closing a generator from another thread while next() is in flight is
+        # unsafe, but close() from the same thread is not.
+        abandoned = threading.Event()
 
         def next_chunk():
             try:
-                return next(gen)
+                chunk = next(gen)
             except StopIteration:
                 return done
+            # The async side gave up while this thread was inside next(gen)
+            # (e.g. a per-chunk timeout).  Close the generator here so its
+            # `with client.stream(...)` unwinds and the Ollama response /
+            # pooled connection is released instead of lingering until GC.
+            if abandoned.is_set():
+                try:
+                    gen.close()
+                except Exception:
+                    pass
+                return done
+            return chunk
 
-        while True:
-            chunk = await loop.run_in_executor(None, next_chunk)
-            if chunk is done:
-                break
-            yield chunk
+        first_chunk = True
+        try:
+            while True:
+                # Per-chunk deadline: steady-state stalls surface at chunk_timeout
+                # (so a wedged Ollama falls back to cloud in ~30s), but the FIRST
+                # chunk gets first_chunk_timeout because a cold model load happens
+                # before the first token.  wait_for also guards against any cause
+                # of a never-resolving future (the class of bug that used to hang
+                # streaming at the end); the httpx read timeout above still bounds
+                # the worker thread either way.
+                timeout = self.first_chunk_timeout if first_chunk else self.chunk_timeout
+                chunk = await asyncio.wait_for(
+                    loop.run_in_executor(None, next_chunk),
+                    timeout=timeout,
+                )
+                if chunk is done:
+                    break
+                first_chunk = False
+                yield chunk
+        finally:
+            # Early exit (exception, timeout, or the caller closing us via
+            # aclose): abandon the sync generator so its `with` block exits
+            # and the HTTP connection returns to the pool promptly.  Skip the
+            # close only if a worker thread is mid-next() — that thread will
+            # close it via the abandoned flag above once it unblocks.
+            abandoned.set()
+            if not gen.gi_running:
+                try:
+                    gen.close()
+                except Exception:
+                    pass
 
     # ---------------------------------------------------------------- embeddings
     def embed(self, text: str, model: Optional[str] = None) -> list[float]:
@@ -153,8 +225,11 @@ class LocalLLM:
         response.raise_for_status()
         return response.json().get("embedding", [])
     
-    def close(self) -> None:
-        """Clean up HTTP client."""
+    async def close(self) -> None:
+        """Clean up HTTP clients (sync + async)."""
         if self._client is not None:
             self._client.close()
             self._client = None
+        if self._async_client is not None:
+            await self._async_client.aclose()
+            self._async_client = None

@@ -188,3 +188,39 @@ def test_submit_after_close_raises():
         raised = True
         assert "closed" in str(exc)
     assert raised is True
+
+
+def test_close_resolves_all_futures_across_multiple_batches():
+    """Close() must resolve every outstanding future when several batches are
+    in flight at once — one mid-processing plus more queued behind it — so no
+    caller ever hangs on shutdown.  With max_batch_size=2 and 5 submits, the
+    drain forms batches [0,1], [2,3], [4]; close() lands while [0,1] is still
+    being processed, so [2,3] and [4] are still queued."""
+    processed = []
+
+    async def processor(payloads):
+        processed.append(list(payloads))
+        await asyncio.sleep(1.0)  # hold every batch open so close() must reject
+        return list(payloads)
+
+    async def run():
+        batcher = RequestBatcher(processor, max_batch_size=2, max_wait_time=0.05)
+        tasks = [asyncio.ensure_future(batcher.submit(i)) for i in range(5)]
+        await asyncio.sleep(0.15)  # batch [0,1] mid-processing; [2,3] and [4] queued
+        assert processed == [[0, 1]], "expected exactly one batch in flight"
+        assert batcher.stats()["queue_size"] == 3
+        await batcher.close()
+        outcomes = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True), timeout=3
+        )
+        return outcomes, batcher.stats()
+
+    outcomes, stats = asyncio.run(run())
+    # Every submitted future resolved — none hung (wait_for would have fired).
+    assert len(outcomes) == 5
+    for outcome in outcomes:
+        assert isinstance(outcome, RuntimeError) and "closed" in str(outcome), \
+            f"expected a close rejection, got {outcome!r}"
+    # Nothing left behind after close.
+    assert stats["pending_futures"] == 0
+    assert stats["queue_size"] == 0

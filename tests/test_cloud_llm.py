@@ -53,12 +53,16 @@ def test_deepgram_stt_transcribe_uses_api(monkeypatch):
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
             self.calls = []
+            self.closed = False
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+        async def aclose(self):
+            self.closed = True
 
         async def post(self, url, params=None, headers=None, content=None):
             self.calls.append((url, params, headers, content))
@@ -84,12 +88,16 @@ def test_deepgram_tts_synthesize_uses_api(monkeypatch):
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
             self.calls = []
+            self.closed = False
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+        async def aclose(self):
+            self.closed = True
 
         async def post(self, url, params=None, json=None, headers=None, **kwargs):
             self.calls.append((url, params, json, headers, kwargs))
@@ -113,12 +121,16 @@ def test_tts_synthesize_base64_returns_audio_payload(monkeypatch):
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):
             self.calls = []
+            self.closed = False
 
         async def __aenter__(self):
             return self
 
         async def __aexit__(self, exc_type, exc, tb):
             return False
+
+        async def aclose(self):
+            self.closed = True
 
         async def post(self, url, params=None, json=None, headers=None, **kwargs):
             self.calls.append((url, params, json, headers, kwargs))
@@ -135,3 +147,85 @@ def test_tts_synthesize_base64_returns_audio_payload(monkeypatch):
 
     assert mime == "audio/mpeg"
     assert base64.b64decode(data) == b"deepgram-audio"
+
+def test_stt_engine_pools_one_client_and_closes(monkeypatch):
+    instances = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self._payload
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+            instances.append(self)
+
+        async def aclose(self):
+            self.closed = True
+
+        async def post(self, url, params=None, headers=None, content=None):
+            return FakeResponse({"results": {"channels": [{"alternatives": [{"transcript": "pooled transcript"}]}]}})
+
+    monkeypatch.setattr("httpx.AsyncClient", FakeAsyncClient)
+    engine = STTEngine(settings=types.SimpleNamespace(deepgram_api_key="demo-key", deepgram_stt_model="nova-2"))
+
+    async def run():
+        first = await engine.transcribe(b"a", mime="audio/wav")
+        second = await engine.transcribe(b"b", mime="audio/wav")
+        await engine.close()
+        await engine.close()  # idempotent
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first == second == "pooled transcript"
+    assert len(instances) == 1, "one pooled client must serve every request"
+    assert instances[0].closed is True
+    assert engine._client is None
+
+
+def test_tts_engine_pools_one_client_and_closes(monkeypatch):
+    instances = []
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.content = payload
+
+        def raise_for_status(self):
+            return None
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+            instances.append(self)
+
+        async def aclose(self):
+            self.closed = True
+
+        async def post(self, url, params=None, json=None, headers=None, **kwargs):
+            return FakeResponse(b"deepgram-audio")
+
+    monkeypatch.setattr("httpx.AsyncClient", FakeAsyncClient)
+    engine = TTSEngine(settings=types.SimpleNamespace(
+        deepgram_api_key="demo-key",
+        deepgram_tts_model="aura-asteria-en",
+        deepgram_tts_voice="aura-asteria-en",
+    ))
+
+    async def run():
+        first = await engine.synthesize("hello")
+        second = await engine.synthesize("world")
+        await engine.close()
+        return first, second
+
+    first, second = asyncio.run(run())
+    assert first == second == b"deepgram-audio"
+    assert len(instances) == 1, "one pooled client must serve every request"
+    assert instances[0].closed is True
+    assert engine._client is None
+

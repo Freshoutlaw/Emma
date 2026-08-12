@@ -157,3 +157,41 @@ def test_guardian_gates_read_and_write(io, tmp_path):
 
     asyncio.run(run())
     assert [c[0] for c in io.guardian.calls] == ["file_write", "read_file"]
+
+
+def test_write_is_byte_exact_with_mixed_line_endings(io, tmp_path):
+    """CRLF and LF inside the same content must both survive the round trip.
+
+    On Windows, a text-mode write translates every bare \n to \r\n, which
+    would turn the embedded CRLF into \r\r\n — this test pins the
+    newline="" behavior in both directions.
+    """
+    path = str(tmp_path / "mixed.txt")
+    content = "line one\r\nline two\nline three\r\ntrailing lf\n"
+
+    async def run():
+        result = await io.write_file(path, content)
+        back = await io.read_file(path)
+        return result, back
+
+    result, back = asyncio.run(run())
+    assert back == content
+    assert result["bytes"] == len(content)
+    assert (tmp_path / "mixed.txt").read_bytes() == content.encode()
+
+
+def test_aiofiles_branch_writes_byte_exact(io, tmp_path, monkeypatch):
+    """The aiofiles branch must be byte-exact too (newline="" forwarded)."""
+    import capabilities.system_io as sio
+
+    fake = _FakeAsyncOpen()
+    monkeypatch.setattr(sio, "async_open", fake)
+    path = str(tmp_path / "aio_mixed.txt")
+    content = "crlf line\r\nlf line\n"
+
+    async def run():
+        await io.write_file(path, content)
+        return await io.read_file(path)
+
+    assert asyncio.run(run()) == content
+    assert (tmp_path / "aio_mixed.txt").read_bytes() == content.encode()

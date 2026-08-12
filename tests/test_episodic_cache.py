@@ -170,3 +170,118 @@ def test_recall_excludes_negatives_when_enough_positives_exist(tmp_path):
     rows = asyncio.run(run())
     assert len(rows) == 2
     assert all(round(r["score"], 4) == 1.0 for r in rows), "negatives must not displace positives"
+
+
+def test_query_cache_prune_boundary_is_exact(tmp_path):
+    """Pin the prune trigger: 201 entries is allowed, the 202nd insert drops
+    the oldest half (201 // 2 = 100) and lands at 102."""
+    mem = _memory(tmp_path)
+
+    async def run():
+        await mem.remember("seed episode content")
+        for i in range(201):
+            await mem.recall(f"q{i}", k=2)
+        at_201 = len(mem._query_cache)
+        await mem.recall("q201", k=2)  # the 202nd insert fires the prune
+        at_202 = len(mem._query_cache)
+        return at_201, at_202
+
+    at_201, at_202 = asyncio.run(run())
+    assert at_201 == 201, "below the threshold nothing may be pruned"
+    assert at_202 == 102, "prune must drop the oldest half, then add the new entry"
+
+
+def test_query_cache_prune_evicts_oldest_keeps_newest(tmp_path):
+    """After sustained churn the oldest queries are gone and recent ones live."""
+    mem = _memory(tmp_path)
+
+    async def run():
+        await mem.remember("seed episode content")
+        for i in range(230):
+            await mem.recall(f"distinct query number {i}", k=2)
+        return len(mem._query_cache), "distinct query number 0:2" in mem._query_cache, "distinct query number 229:2" in mem._query_cache
+
+    size, oldest_gone, newest_present = asyncio.run(run())
+    # 201 -> drop 100 -> 101, then +29 inserts = 130 (see boundary test).
+    assert size == 130, f"cache must settle at the post-prune steady state, was {size}"
+    assert oldest_gone is False, "the oldest entries must be evicted"
+    assert newest_present is True, "recent entries must survive"
+
+
+class _FakeSupabase:
+    """Fake Supabase that emulates server-side match_episodes filtering.
+
+    If the caller sends a match_threshold, rows below it are dropped (mimicking
+    a pgvector function that filters on the threshold); otherwise all rows are
+    returned ordered as given. Records every rpc call for assertions.
+    """
+
+    def __init__(self, rows):
+        self.rows = rows
+        self.rpc_calls = []
+
+    def is_configured(self):
+        return True
+
+    async def rpc(self, function, params):
+        self.rpc_calls.append((function, dict(params or {})))
+        results = self.rows
+        threshold = (params or {}).get("match_threshold")
+        if threshold is not None:
+            results = [r for r in results if float(r.get("similarity", 0.0)) >= threshold]
+        return results
+
+    async def insert(self, table, rows):
+        return rows
+
+
+def test_remote_recall_sends_no_match_threshold(tmp_path):
+    """Regression: recall sent match_threshold=0.7, a param the documented
+    match_episodes(query_embedding, match_count) signature doesn't accept —
+    PostgREST would reject the call and remote recall silently fell back."""
+    fake = _FakeSupabase(rows=[])
+    mem = EpisodicMemory(
+        db_path=str(tmp_path / "memory.db"),
+        embedder=_ControlledEmbedder(),
+        supabase=fake,
+    )
+    asyncio.run(mem.recall("query something", k=2))
+    assert fake.rpc_calls, "remote recall should have attempted the RPC"
+    function, params = fake.rpc_calls[0]
+    assert function == "match_episodes"
+    assert params == {
+        "query_embedding": [1.0, 0.0],
+        "match_count": 2,
+    }, f"no match_threshold may be sent, got {params}"
+
+
+def test_remote_recall_keeps_negative_similarity_rows(tmp_path):
+    """Regression: a 0.7 similarity floor dropped weak/negative rows, so remote
+    recall returned short lists when positives were scarce — the same bug class
+    as the local negative-row fix."""
+    fake = _FakeSupabase(rows=[
+        {"id": "a", "content": "weak match", "similarity": 0.2},
+        {"id": "b", "content": "unrelated", "similarity": -0.4},
+        {"id": "c", "content": "opposite", "similarity": -0.9},
+    ])
+    mem = EpisodicMemory(
+        db_path=str(tmp_path / "memory.db"),
+        embedder=_ControlledEmbedder(),
+        supabase=fake,
+    )
+    rows = asyncio.run(mem.recall("query fill me", k=3))
+    assert len(rows) == 3, "remote recall must fill top-k even with weak/negative matches"
+    assert [float(r["similarity"]) for r in rows] == [0.2, -0.4, -0.9]
+
+
+def test_remote_recall_falls_back_to_local_when_rpc_returns_nothing(tmp_path):
+    db = str(tmp_path / "memory.db")
+    seed = EpisodicMemory(db_path=db, embedder=_ControlledEmbedder(), supabase=None)
+    asyncio.run(seed.remember("pos one"))
+    asyncio.run(seed.close())
+
+    fake = _FakeSupabase(rows=[])
+    mem = EpisodicMemory(db_path=db, embedder=_ControlledEmbedder(), supabase=fake)
+    rows = asyncio.run(mem.recall("query anything", k=2))
+    assert [r["content"] for r in rows] == ["pos one"], \
+        "empty remote results must fall back to local recall"

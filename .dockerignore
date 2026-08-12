@@ -1,0 +1,14 @@
+# Local/runtime state — never shipped into the image
+.venv/
+data/
+.env
+.env_new
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+emma_ai.egg-info/
+tests/
+*.log
+data/backups/

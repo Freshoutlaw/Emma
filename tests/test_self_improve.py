@@ -180,3 +180,94 @@ def test_keyword_intent_routes_self_improve_commands_without_llm():
     assert keyword_intent("verify agents/router.py") == "self_improve"
     assert keyword_intent("inspect agents/base.py") == "self_improve"
     assert keyword_intent("review your own code") == "self_improve"
+
+
+# ---------------------------------------------------------------- git snapshots
+
+def _init_git_repo(tmp_path: Path, monkeypatch, content: str = "x = 0\n") -> None:
+    """Create a git repo in tmp_path with a baseline commit and a hermetic identity."""
+    import subprocess
+
+    subprocess.run(["git", "init", "-b", "main"], cwd=tmp_path, check=True, capture_output=True)
+    for name in ("GIT_AUTHOR_NAME", "GIT_COMMITTER_NAME"):
+        monkeypatch.setenv(name, "Test Runner")
+    for name in ("GIT_AUTHOR_EMAIL", "GIT_COMMITTER_EMAIL"):
+        monkeypatch.setenv(name, "runner@example.invalid")
+    (tmp_path / "mod.py").write_text(content, encoding="utf-8")
+    subprocess.run(["git", "add", "-A"], cwd=tmp_path, check=True, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "baseline"], cwd=tmp_path, check=True, capture_output=True)
+
+
+def test_apply_patch_snapshots_and_rolls_back_via_git(tmp_path, monkeypatch):
+    """In a git repo: patch → verify → commit on success; checkout on failure."""
+    import subprocess
+
+    _init_git_repo(tmp_path, monkeypatch)
+    # Simulate an external uncommitted edit so the pre-patch snapshot commit
+    # has something real to capture (a clean tree is never snapshot-committed).
+    (tmp_path / "mod.py").write_text("x = 1\n", encoding="utf-8")
+    pipeline = _pipeline(tmp_path)
+    try:
+        pipeline.consent.set_mode("auto")
+
+        async def fake_verify(self, target):
+            content = target.read_text(encoding="utf-8")
+            return (content.startswith("x ="), "fake report")
+
+        monkeypatch.setattr(SelfImproveAgent, "_verify_change", fake_verify)
+
+        async def run():
+            good = await pipeline.self_improve.apply_patch("mod.py", "x = 2\n", reason="test")
+            bad = await pipeline.self_improve.apply_patch("mod.py", "def broken(:\n", reason="test")
+            return good, bad
+
+        good, bad = asyncio.run(run())
+        assert good.ok is True
+        assert "Git: snapshot" in good.output
+        assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "x = 2\n"
+        assert bad.ok is False
+        assert "rolled back" in bad.output
+        assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "x = 2\n", "git checkout must restore the snapshot"
+
+        log = subprocess.run(
+            ["git", "log", "--oneline"], cwd=tmp_path, capture_output=True, text=True
+        ).stdout.strip().splitlines()
+        assert len(log) == 3, f"expected baseline+snapshot+patch, got {log}"
+        assert log[0].endswith("self-modify: applied patch to mod.py (test)")
+        assert log[1].endswith("self-modify: pre-patch snapshot of mod.py")
+        assert log[2].endswith("baseline")
+        status = subprocess.run(
+            ["git", "status", "--porcelain"], cwd=tmp_path, capture_output=True, text=True
+        ).stdout
+        assert "mod.py" not in status, "working tree should be clean after rollback"
+    finally:
+        asyncio.run(pipeline.close())
+
+
+def test_apply_patch_falls_back_to_backup_without_git(tmp_path, monkeypatch):
+    """Outside a git repo, self-modify must keep using .bak snapshots."""
+    # Pre-create the file so the good patch has something to snapshot.
+    (tmp_path / "mod.py").write_text("x = 0\n", encoding="utf-8")
+    pipeline = _pipeline(tmp_path)
+    try:
+        pipeline.consent.set_mode("auto")
+
+        async def fake_verify(self, target):
+            content = target.read_text(encoding="utf-8")
+            return (content.startswith("x ="), "fake report")
+
+        monkeypatch.setattr(SelfImproveAgent, "_verify_change", fake_verify)
+
+        async def run():
+            good = await pipeline.self_improve.apply_patch("mod.py", "x = 1\n", reason="test")
+            bad = await pipeline.self_improve.apply_patch("mod.py", "def broken(:\n", reason="test")
+            return good, bad
+
+        good, bad = asyncio.run(run())
+        assert good.ok is True
+        assert "Backup:" in good.output, "non-git environments must fall back to .bak snapshots"
+        assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "x = 1\n"
+        assert bad.ok is False and "rolled back" in bad.output
+        assert (tmp_path / "mod.py").read_text(encoding="utf-8") == "x = 1\n"
+    finally:
+        asyncio.run(pipeline.close())

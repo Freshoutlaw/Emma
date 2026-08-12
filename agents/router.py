@@ -18,12 +18,10 @@ import asyncio
 import json
 import re
 import time
-import uuid
 from typing import Any, AsyncIterator, Optional
 from functools import lru_cache
 
-from backend.sentence_splitter import StreamingSentenceSplitter
-from backend.tts_store import tts_store
+from backend.speak_pipeline import SpeakPipeline
 
 from agents.base import AgentResult
 from agents.control import ControlAgent, ToolNotAllowedError, UnknownToolError
@@ -278,9 +276,11 @@ class Pipeline:
         if hasattr(self.embedder, 'close'):
             await self.embedder.close()
         if hasattr(self.llm, 'local') and hasattr(self.llm.local, 'close'):
-            self.llm.local.close()
+            await self.llm.local.close()
         if hasattr(self, 'episodic') and hasattr(self.episodic, 'close'):
             await self.episodic.close()
+        await self.stt.close()
+        await self.tts.close()
         self.mqtt.disconnect()
         await self.browser.close()
         if self.supabase_query_agent._pool is not None:
@@ -300,6 +300,13 @@ class AgentRouter:
         LLM is consulted only for ambiguous intents, with a hard timeout.
         """
         keyword = keyword_intent(message)
+
+        # Fast path: short conversational messages (greetings, small talk)
+        # skip the LLM intent call entirely — the reasoning plan step handles
+        # any tool detection, and this saves a full LLM round trip per turn
+        # while avoiding the clarify-on-chat prompt for e.g. "hello world".
+        if keyword == "reasoning" and len(message.split()) <= 5:
+            return {"intent": "reasoning", "tool": None, "args": {}}
 
         # Tier 1 routing policy: try LLM for ambiguous (keyword == reasoning),
         # then apply policy (decomposition, tiebreak, clarify).
@@ -462,83 +469,55 @@ class AgentRouter:
             yield {"type": "actions", "actions": actions}
 
             text = ""
-            # --- pipelined speak path: sentence splitter + hold-one-ahead ---
-            splitter = StreamingSentenceSplitter()
-            base_turn_id = uuid.uuid4().hex
-            seq = 0
-            held_text: str | None = None
-            held_seq: int | None = None
-
+            stream_ok = True
+            stream_error: Optional[str] = None
+            # --- pipelined speak path: hold-one-ahead sentence segmentation ---
+            speak = SpeakPipeline()
             try:
                 async for token in self.pipeline.reasoning.stream_narration(message, context, outputs):
                     text += token
                     yield {"type": "token", "text": token}
+                    for event in speak.feed(token):
+                        yield event
 
-                    # Feed the token into the sentence splitter.  When a
-                    # complete sentence emerges, apply hold-one-ahead: emit
-                    # the PREVIOUS sentence as is_final=false (a new one
-                    # arriving proves it wasn't last), then hold the new one.
-                    for sentence in splitter.feed(token):
-                        if held_text is not None:
-                            sid = f"{base_turn_id}::{held_seq}"
-                            tts_store.record(sid, held_text)
-                            yield {
-                                "type": "speak_segment",
-                                "turn_id": sid,
-                                "base_turn_id": base_turn_id,
-                                "seq": held_seq,
-                                "is_final": False,
-                            }
-                        held_text = sentence
-                        held_seq = seq
-                        seq += 1
-
-                # Flush whatever remains in the splitter buffer.
-                remaining = splitter.flush()
-                if remaining:
-                    if held_text is not None:
-                        sid = f"{base_turn_id}::{held_seq}"
-                        tts_store.record(sid, held_text)
-                        yield {
-                            "type": "speak_segment",
-                            "turn_id": sid,
-                            "base_turn_id": base_turn_id,
-                            "seq": held_seq,
-                            "is_final": False,
-                        }
-                    held_text = remaining
-                    held_seq = seq
-                    seq += 1
-
-                # Emit the final segment.
-                if held_text is not None:
-                    sid = f"{base_turn_id}::{held_seq}"
-                    tts_store.record(sid, held_text)
-                    yield {
-                        "type": "speak_segment",
-                        "turn_id": sid,
-                        "base_turn_id": base_turn_id,
-                        "seq": held_seq,
-                        "is_final": True,
-                    }
+                for event in speak.finish():
+                    yield event
 
             except LLMUnavailable:
+                # The provider vanished mid-stream.  A fallback notice is still
+                # delivered, but the LLM narration failed — the turn must be
+                # recorded as a failure, not a success.
+                stream_ok = False
+                stream_error = "llm_unavailable"
                 fallback = "\n".join(outputs) if outputs else (
                     "⚠ No LLM provider available (start Ollama or set GROQ_API_KEY)."
                 )
                 text = fallback
                 yield {"type": "token", "text": fallback}
             except Exception as exc:
+                stream_ok = False
+                stream_error = str(exc)
                 text = f"⚠ error: {exc}"
                 yield {"type": "token", "text": text}
 
-            result = AgentResult(ok=True, output=text, intent=intent, actions=actions)
+            result = AgentResult(ok=stream_ok, output=text, intent=intent, actions=actions, error=stream_error)
             try:
                 episode_id = await self.pipeline.episodic.remember(message, kind="user", payload={"intent": intent})
                 result.memory_ids.append(episode_id)
                 yield {"type": "memory", "episode": {"id": episode_id, "content": message, "kind": "user"}}
             except Exception:
                 pass
+            # Surface streamed outcomes in the audit log with the same shape as
+            # run()'s chat.completed: a mid-stream LLM failure carries
+            # decision.ok=false (with the error), so it is observable in
+            # /api/system/activity instead of the turn looking like a success.
+            self.pipeline.audit.log(
+                "chat.completed",
+                action=intent,
+                actor="router",
+                decision={"ok": stream_ok},
+                detail={"output": text[:500], "error": stream_error},
+            )
             yield {"type": "done", "result": result.to_dict()}
             return
 

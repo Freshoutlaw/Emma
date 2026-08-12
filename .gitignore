@@ -31,3 +31,6 @@ Thumbs.db
 
 # Environment dumps containing secrets (see .env)
 env_new
+
+# Pre-seeded wheels for flaky-network builds (see infrastructure/Dockerfile)
+infrastructure/wheels/*.whl

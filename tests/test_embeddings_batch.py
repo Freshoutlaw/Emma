@@ -136,3 +136,64 @@ def test_embed_total_failure_yields_deterministic_fallback(monkeypatch):
 
     vector = asyncio.run(run())
     assert vector == embedder._fallback("some content here")
+
+
+def test_fallback_matches_observed_model_dim(monkeypatch):
+    """Real embeddings (e.g. nomic-embed-text -> 768-dim) must not mix with a
+    configured-dim fallback: after the first real vector, the deterministic
+    fallback adopts the observed dimension so cosine scoring never truncates."""
+    # The model returns 3-dim vectors while the config claims dim=2 — the
+    # exact live condition (nomic-embed-text -> 768 vs configured 384).
+    class Fake3:
+        def __init__(self, *args, **kwargs):
+            self.posts = []
+
+        async def post(self, url, json=None, **kwargs):
+            self.posts.append((url, json))
+            if url.endswith("/api/embed"):
+                inputs = json.get("input", [])
+                return type("R", (), {"raise_for_status": lambda s: None,
+                                      "json": lambda s: {"embeddings": [[float(len(t)), 0.0, 1.0] for t in inputs]}})()
+            return type("R", (), {"raise_for_status": lambda s: None, "json": lambda s: {}})()
+
+        async def get(self, url, **kwargs):
+            return type("R", (), {"raise_for_status": lambda s: None,
+                                  "json": lambda s: {"models": [{"name": "nomic-embed-text"}]}})()
+
+        async def aclose(self):
+            return None
+
+    monkeypatch.setattr("httpx.AsyncClient", lambda *a, **k: Fake3())
+    embedder = Embedder("http://localhost:11434", "nomic-embed-text", dim=2)
+
+    async def run():
+        try:
+            vector = await embedder.embed("hello world")
+            return vector, embedder._fallback("goodbye moon")
+        finally:
+            await embedder.close()
+
+    vector, fallback = asyncio.run(run())
+    assert len(vector) == 3
+    assert embedder._observed_dim == 3
+    assert len(fallback) == 3, "fallback must adopt the observed model dim, not the stale config"
+
+
+def test_fallback_uses_configured_dim_before_any_real_embed(monkeypatch):
+    """Before any real embedding is seen, the fallback uses the configured dim
+    (matches a model that is present but never successfully queried)."""
+    fake = _fake_client(models=("qwen3.5:2b",))  # model missing -> no network
+    monkeypatch.setattr("httpx.AsyncClient", lambda *a, **k: fake)
+    embedder = Embedder("http://localhost:11434", "nomic-embed-text", dim=4)
+
+    async def run():
+        try:
+            vector = await embedder.embed("some content here")
+            return vector
+        finally:
+            await embedder.close()
+
+    vector = asyncio.run(run())
+    assert vector == embedder._fallback("some content here")
+    assert len(vector) == 4
+    assert embedder._observed_dim is None

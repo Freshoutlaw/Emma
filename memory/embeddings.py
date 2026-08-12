@@ -72,6 +72,12 @@ class Embedder:
         # Cached model-availability probe so a missing embedding model doesn't
         # make every embed() pay a network round trip + batch window.
         self._avail_cache: Optional[tuple[float, bool]] = None
+        # Dimension observed from a real model embedding, set on first success.
+        # Real models (e.g. nomic-embed-text -> 768) can differ from the
+        # configured `dim`, and mixing dims silently corrupts cosine scoring
+        # (zip truncates to the shorter).  The deterministic fallback uses
+        # the observed dim so fallback and real vectors always match.
+        self._observed_dim: Optional[int] = None
 
         # Use adaptive cache if available
         if USE_ADAPTIVE_CACHE:
@@ -142,6 +148,8 @@ class Embedder:
             response.raise_for_status()
             embeddings = response.json().get("embeddings")
             if embeddings and len(embeddings) == len(texts):
+                for emb in embeddings:
+                    self._note_dim(emb)
                 return embeddings
         except Exception:
             pass
@@ -158,6 +166,7 @@ class Embedder:
             response.raise_for_status()
             vector = response.json().get("embedding")
             if vector:
+                self._note_dim(vector)
                 return vector
         except Exception:
             pass
@@ -236,12 +245,18 @@ class Embedder:
         return {"size": 0, "type": "none"}
 
     # ------------------------------------------------------------------ local
+    def _note_dim(self, vector: list[float]) -> None:
+        """Record the real model's embedding dimension on first sight."""
+        if vector and self._observed_dim is None:
+            self._observed_dim = len(vector)
+
     def _fallback(self, text: str) -> list[float]:
         """Deterministic hashed bag-of-words embedding (L2-normalized)."""
-        vector = [0.0] * self.dim
+        dim = self._observed_dim or self.dim
+        vector = [0.0] * dim
         for token in _TOKEN_RE.findall(text.lower()):
             digest = hashlib.blake2b(token.encode(), digest_size=8).digest()
-            index = int.from_bytes(digest[:4], "big") % self.dim
+            index = int.from_bytes(digest[:4], "big") % dim
             sign = 1.0 if digest[4] & 1 else -1.0
             vector[index] += sign
         norm = math.sqrt(sum(v * v for v in vector)) or 1.0

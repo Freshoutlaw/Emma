@@ -1,8 +1,8 @@
 # Emma AI - Final Optimization Report
 
-## 🎉 Complete Optimization Summary
+## ⚠️ Complete Optimization Summary — estimates not measured
 
-Emma AI has been comprehensively optimized with **20 major performance improvements** across all system layers, resulting in an estimated **300-1500x performance improvement** for typical workloads.
+Emma AI received performance improvements across system layers, but **no speedup figure was benchmarked**. The former "300-1500x" headline is withdrawn; every "x faster" figure below is an unverified engineering estimate.
 
 ## 📊 All Optimizations Implemented
 
@@ -57,7 +57,7 @@ Emma AI has been comprehensively optimized with **20 major performance improveme
     - Synchronous health checks (non-blocking)
     - Cached availability with 10s TTL
 
-### Phase 2: Additional Optimizations (5/5 ✅)
+### Phase 2: Additional Optimizations (4/5 ✅ — agent pooling removed)
 
 11. **Extended TTS Caching** - 2-5x faster
     - TTL extended from 120s to 3600s (1 hour)
@@ -78,12 +78,7 @@ Emma AI has been comprehensively optimized with **20 major performance improveme
     - Connection pooling with keep-alive
     - Automatic failure tracking and recovery
 
-14. **Agent Pooling Infrastructure** - 2-5x faster
-    - `AgentPool` class for pre-warmed agent instances
-    - Configurable pool size (default: 5 agents per type)
-    - Lazy loading of agents
-    - Thread-safe pool management
-    - Return/reuse pattern for efficiency
+14. ~~Agent Pooling Infrastructure~~ — REMOVED (dead code, never wired in; unmeasured "2-5x" claim)
 
 15. **Optimized Tool Catalog Caching** - 1-2ms faster
     - Tool catalog computed once per agent instance
@@ -91,7 +86,7 @@ Emma AI has been comprehensively optimized with **20 major performance improveme
     - Eliminates repeated JSON serialization
     - Reduces memory allocations
 
-### Phase 3: Advanced Optimizations (5/5 ✅)
+### Phase 3: Advanced Optimizations (4/5 ✅ — speculative execution removed)
 
 16. **Adaptive Caching System** - 1.5-2x smarter
     - Adaptive TTL based on access patterns
@@ -101,21 +96,9 @@ Emma AI has been comprehensively optimized with **20 major performance improveme
     - TTL increases for frequently accessed items
     - Integrated with embeddings cache
 
-17. **Request Batching Infrastructure** - 2-5x faster
-    - Batch similar operations together
-    - Reduce API call overhead
-    - Automatic batch size optimization
-    - Configurable wait times (max_wait_time=0.1s)
-    - Async batch processing
-    - Min batch size threshold
+17. **Request Batching** - Integrated into the embedder (`memory/embeddings.py`): concurrent `embed()` calls coalesce into one Ollama `/api/embed` call, gated on the embedding model being installed. Speedup unmeasured.
 
-18. **Speculative Execution Framework** - 2-3x faster
-    - Predict likely next operations
-    - Pre-execute for faster response
-    - Cache speculative results
-    - Pattern probability tracking
-    - Cooldown management (5s default)
-    - Probability threshold (0.3 minimum)
+18. ~~Speculative Execution Framework~~ — REMOVED (dead code, never wired in; unmeasured "2-3x" claim)
 
 19. **Performance Monitoring System** - Data-driven optimization
     - Performance metrics collection
@@ -145,23 +128,25 @@ Emma AI has been comprehensively optimized with **20 major performance improveme
 | Serialization | JSON | 2-3x | orjson |
 | Voice | TTS Synthesis | 2-5x | Extended caching |
 | ML | Batch Embedding | 5-10x | Batch API calls |
-| Cloud | Supabase Operations | 2-5x | Circuit breaker + cache |
-| Agents | Initialization | 2-5x | Pooling + catalog cache |
-| Cache | Management | 1.5-2x | Adaptive TTL + eviction |
-| Operations | Bulk | 2-5x | Request batching |
-| Execution | Predictable | 2-3x | Speculative execution |
+| Cloud | Supabase Operations | 2-5x | Circuit breaker + cache (estimated) |
+| Agents | Initialization | 1-2ms | Catalog caching only (pooling removed) |
+| Cache | Management | 1.5-2x | Adaptive TTL + eviction (estimated) |
+| Operations | Bulk | n/a | Request batching (unmeasured) |
+| Execution | Predictable | n/a | REMOVED — speculative executor deleted |
 
-**Combined Estimated Improvement: 300-1500x overall for typical workloads**
+**No combined figure is claimed — none of the estimates were benchmarked.**
 
 ## 🗂️ Files Modified/Created
 
-### New Files Created (6)
+### New Files Created (4)
 - `memory/adaptive_cache.py` - Adaptive caching system
-- `agents/agent_pool.py` - Agent pooling infrastructure
 - `orchestration/request_batcher.py` - Request batching system
-- `orchestration/speculative_executor.py` - Speculative execution framework
 - `performance/monitor.py` - Performance monitoring system
 - `backend/routers/performance.py` - Performance metrics API endpoint
+
+Removed since the original report: `agents/agent_pool.py` and
+`orchestration/speculative_executor.py` — dead code, never wired into a call
+path.
 
 ### Modified Files (16)
 - `backend/main.py` - GZipMiddleware, resource cleanup, performance router
@@ -203,13 +188,12 @@ All optimizations are active and functioning correctly.
 3. **Resource Management**: Proper cleanup prevents memory leaks
 4. **Monitoring**: Performance monitoring enables data-driven decisions
 5. **Adaptive**: Smart caching adapts to usage patterns
-6. **Scalable**: Pooling and batching enable high-throughput
-7. **Predictive**: Speculative execution for common patterns
-8. **Observable**: Comprehensive metrics for monitoring
+6. **Scalable**: Embedder batching coalesces concurrent requests
+7. **Observable**: Comprehensive metrics for monitoring
 
 ## 🔮 Future Enhancement Opportunities
 
-While the current optimizations provide 300-1500x improvement, these advanced features could be added in the future:
+These advanced features could be added in the future:
 
 1. **Distributed Caching (Redis)** - 5-10x faster cross-request caching
 2. **Approximate Nearest Neighbor (FAISS)** - 10-100x faster similarity search
@@ -230,9 +214,7 @@ To verify optimization effectiveness:
 - [ ] Latency benchmarking (before/after)
 - [ ] Circuit breaker behavior testing
 - [ ] Batch operation efficiency testing
-- [ ] Agent pool reuse testing
 - [ ] Adaptive cache hit rate analysis
-- [ ] Speculative execution accuracy
 - [ ] Performance metrics validation
 
 ## 🧪 Monitoring Metrics
@@ -245,20 +227,18 @@ Key metrics to monitor for optimization verification:
 4. **Response Times** - Should be significantly lower than before
 5. **Memory Usage** - Should be stable with proper cache limits
 6. **Circuit Breaker State** - Should rarely open under normal conditions
-7. **Agent Pool Hit Rate** - Should show good reuse under load
-8. **Adaptive Cache Stats** - Should show adaptive TTL adjustments
-9. **Batch Efficiency** - Should show reduced API call counts
-10. **Speculative Execution** - Should show hit rate for predictions
+7. **Adaptive Cache Stats** - Should show adaptive TTL adjustments
+8. **Batch Efficiency** - Should show reduced API call counts
 
-## 🎉 Conclusion
+## Conclusion
 
-Emma AI has been successfully optimized with **20 major performance improvements**:
+Emma AI received **18 major performance improvements** (two "advanced" modules — agent pooling and speculative execution — were dead code and have been removed):
 
 - **10 Critical Optimizations** (Phase 1)
-- **5 Additional Optimizations** (Phase 2)
-- **5 Advanced Optimizations** (Phase 3)
+- **4 Additional Optimizations** (Phase 2 — agent pooling removed)
+- **4 Advanced Optimizations** (Phase 3 — speculative execution removed)
 
-The combined effect is an estimated **300-1500x performance improvement** for typical workloads with repeated operations.
+**No combined speedup is claimed — none of the individual estimates were benchmarked.**
 
 All optimizations are:
 - ✅ Production-ready
@@ -270,11 +250,11 @@ All optimizations are:
 
 Emma is now significantly more efficient, scalable, and capable of handling high-throughput workloads with advanced features like adaptive caching, request batching, speculative execution, and comprehensive performance monitoring.
 
-**Emma is now 100x better and faster! 🚀**
+**Measured performance: pending — see /api/performance/stats.**
 
 ---
 
-*Report generated: 2026-08-10*
+*Report generated: 2026-08-10 (revised: dead modules removed, unmeasured claims withdrawn)*
 *Optimization version: 3.0*
-*Total optimizations: 20*
-*Estimated performance improvement: 300-1500x*
+*Total optimizations: 18*
+*Estimated performance improvement: none claimed (unmeasured)*

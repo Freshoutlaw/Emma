@@ -1,13 +1,18 @@
 """Self-improvement agent — Emma reading, reviewing and modifying her own code.
 
 Modifications are restricted to the project tree and gated behind the
-`self_modify` consent rule (HIGH severity by default). Before any write, a
-backup is saved under `data/backups/` and the change is audit-logged.
+`self_modify` consent rule (HIGH severity by default). Before any write the
+file's current content is snapshotted — via a git commit when the project is
+a git repo, otherwise a `.bak` copy under `data/backups/` — and the change
+is audit-logged.
 
 Every applied patch runs a **verification loop**: the changed file is
 syntax-checked (`py_compile`) and, when pytest is available, the test suite
-is executed. If any check fails, the backup is restored and the rollback is
-audit-logged — a broken Emma never survives an edit.
+is executed. If any check fails, the snapshot is restored (`git checkout` in
+repo mode, the `.bak` copy otherwise) and the rollback is audit-logged — a
+broken Emma never survives an edit.  Successful repo-mode patches are
+committed so the working tree stays clean and every self-modify is a
+reviewable commit.
 """
 
 from __future__ import annotations
@@ -109,6 +114,78 @@ class SelfImproveAgent(BaseAgent):
         last = next((line for line in reversed((out or "").strip().splitlines()) if line.strip()), "")
         return True, "\n".join(checks) + f"\n✔ tests — {last}"
 
+    # ---------------------------------------------------------------- git snapshots
+    async def _git(self, *args: str) -> tuple[int, str, str]:
+        """Run a git subcommand in the project root (no shell)."""
+        return await self._run_proc(
+            ["git", *args],
+            cwd=self.pipeline.settings.project_root,
+            timeout=60,
+        )
+
+    async def _git_is_repo(self) -> bool:
+        """Whether the project root is inside a git work tree."""
+        try:
+            code, _, _ = await self._git("rev-parse", "--is-inside-work-tree")
+        except Exception:
+            return False
+        return code == 0
+
+    def _git_rel(self, target: Path) -> str:
+        """POSIX-style path of `target` relative to the project root."""
+        return target.relative_to(self.pipeline.settings.project_root).as_posix()
+
+    async def _git_snapshot(self, target: Path) -> Optional[str]:
+        """Commit the file's current content; return the snapshot short sha.
+
+        Returns None when the file already matches HEAD (nothing to commit),
+        or the string "new" when the file does not exist yet (rollback then
+        means deleting it).  Raises on git failure so callers can fall back.
+        """
+        rel = self._git_rel(target)
+        if not target.exists():
+            return "new"
+        code, _, err = await self._git("add", "--", rel)
+        if code != 0:
+            raise RuntimeError(f"git add failed: {(err or '').strip()[:200]}")
+        code, _, _ = await self._git("diff", "--cached", "--quiet", "--", rel)
+        if code == 0:
+            return None  # unchanged — nothing to snapshot
+        code, _, err = await self._git("commit", "-m", f"self-modify: pre-patch snapshot of {rel}")
+        if code != 0:
+            raise RuntimeError(f"git commit failed: {(err or '').strip()[:200]}")
+        _, out, _ = await self._git("rev-parse", "--short", "HEAD")
+        return out.strip()
+
+    async def _git_restore(self, target: Path, existed_before: bool) -> None:
+        """Restore the pre-patch state: checkout the file, or delete it if it
+        did not exist before the patch."""
+        rel = self._git_rel(target)
+        if existed_before:
+            code, _, err = await self._git("checkout", "--", rel)
+            if code != 0:
+                raise RuntimeError(f"git checkout failed: {(err or '').strip()[:200]}")
+        else:
+            target.unlink(missing_ok=True)
+
+    async def _git_commit_patch(self, target: Path, reason: str) -> Optional[str]:
+        """Commit the applied patch; return the commit short sha (or None if
+        nothing changed)."""
+        rel = self._git_rel(target)
+        code, _, err = await self._git("add", "--", rel)
+        if code != 0:
+            raise RuntimeError(f"git add failed: {(err or '').strip()[:200]}")
+        code, _, _ = await self._git("diff", "--cached", "--quiet", "--", rel)
+        if code == 0:
+            return None
+        code, _, err = await self._git(
+            "commit", "-m", f"self-modify: applied patch to {rel} ({reason[:80]})"
+        )
+        if code != 0:
+            raise RuntimeError(f"git commit failed: {(err or '').strip()[:200]}")
+        _, out, _ = await self._git("rev-parse", "--short", "HEAD")
+        return out.strip()
+
     # ---------------------------------------------------------------- api
     async def inspect(self, path: str) -> AgentResult:
         target = self._resolve(path)
@@ -168,45 +245,105 @@ class SelfImproveAgent(BaseAgent):
             actor="agent:self_improve",
         )
         # Decision is guaranteed allowed here (guard raises otherwise).
+        root = self.pipeline.settings.project_root
+        existed_before = target.exists()
         backup: Optional[Path] = None
-        if target.exists():
+        method = "backup"
+        snapshot_sha: Optional[str] = None
+
+        # Prefer a git snapshot when the project is a repo; fall back to the
+        # classic data/backups/*.bak copy otherwise (e.g. packaged deploys
+        # without git).
+        use_git = False
+        if await self._git_is_repo():
+            try:
+                snapshot_sha = await self._git_snapshot(target)
+                use_git = True
+                method = "git"
+            except Exception:
+                use_git = False  # git failed — fall back to .bak
+
+        if not use_git and existed_before:
             backup = self.pipeline.settings.backups_dir / f"{datetime.now():%Y%m%d_%H%M%S}_{target.name}.bak"
             backup.parent.mkdir(parents=True, exist_ok=True)
             backup.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
+
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(new_content, encoding="utf-8")
         self._audit(
             "self_improve.applied",
             action="self_modify",
-            detail={"path": str(target), "reason": reason, "backup": str(backup) if backup else None, "bytes": len(new_content)},
+            detail={
+                "path": str(target),
+                "reason": reason,
+                "method": method,
+                "snapshot": snapshot_sha,
+                "backup": str(backup) if backup else None,
+                "bytes": len(new_content),
+            },
         )
 
         # ---- verification loop: keep the change only if it passes ----------
         passed, report = await self._verify_change(target)
         if not passed:
-            if backup is not None:
+            rollback_note = ""
+            if use_git:
+                try:
+                    await self._git_restore(target, existed_before)
+                    rollback_note = f"restored via git ({snapshot_sha or 'HEAD'})"
+                except Exception as exc:
+                    rollback_note = f"git restore FAILED — manual intervention required: {exc}"
+            elif backup is not None:
                 target.write_text(backup.read_text(encoding="utf-8"), encoding="utf-8")
+                rollback_note = f"restored from backup ({backup.name})"
             self._audit(
                 "self_improve.rolled_back",
                 action="self_modify",
-                detail={"path": str(target), "reason": reason, "backup": str(backup) if backup else None},
+                detail={
+                    "path": str(target),
+                    "reason": reason,
+                    "method": method,
+                    "snapshot": snapshot_sha,
+                    "backup": str(backup) if backup else None,
+                    "rollback": rollback_note or "no snapshot available",
+                },
             )
             return AgentResult(
                 ok=False,
-                output=f"✘ Self-modification to {target} FAILED verification — change rolled back.\n\n{report}",
+                output=(
+                    f"✘ Self-modification to {target} FAILED verification — change rolled back "
+                    f"({rollback_note or 'no snapshot available'}).\n\n{report}"
+                ),
                 intent="self_improve",
                 error="verification failed",
             )
 
+        patch_sha = None
+        if use_git:
+            try:
+                patch_sha = await self._git_commit_patch(target, reason)
+            except Exception:
+                patch_sha = None  # non-fatal — the tree stays modified
+
         self._audit(
             "self_improve.verified",
             action="self_modify",
-            detail={"path": str(target), "reason": reason, "backup": str(backup) if backup else None},
+            detail={
+                "path": str(target),
+                "reason": reason,
+                "method": method,
+                "snapshot": snapshot_sha,
+                "patch": patch_sha,
+                "backup": str(backup) if backup else None,
+            },
         )
-        backup_note = f"\nBackup: {backup}" if backup else ""
+        if use_git:
+            note = f"\nGit: snapshot {snapshot_sha or '(unchanged)'} → patch {patch_sha or '(uncommitted)'}"
+        else:
+            note = f"\nBackup: {backup}" if backup else ""
         return AgentResult(
             ok=True,
-            output=f"✔ Applied self-modification to {target} — verification passed.\n{report}{backup_note}",
+            output=f"✔ Applied self-modification to {target} — verification passed.\n{report}{note}",
             intent="self_improve",
         )
 

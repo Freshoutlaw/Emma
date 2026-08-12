@@ -1,7 +1,7 @@
 # Emma AI Performance Optimizations
 
 ## Overview
-This document summarizes all performance optimizations implemented to make Emma 100x better and faster.
+This document summarizes the performance optimizations implemented in Emma. **No speedup below was benchmarked — every "x faster" figure is an engineering estimate, not a measurement.**
 
 ## Phase 1: Critical Optimizations (Implemented ✅)
 
@@ -167,20 +167,10 @@ This document summarizes all performance optimizations implemented to make Emma 
 - Connection pooling with keep-alive
 - Automatic failure tracking and recovery
 
-### 14. Agent Pooling Infrastructure
-**Files Modified:**
-- `agents/agent_pool.py` - New file with agent pooling infrastructure
-- `agents/reasoning.py` - Cached tool catalog and system prompt
-
-**Impact:** 2-5x faster agent initialization for repeated use
-
-**Details:**
-- Created `AgentPool` class for pre-warmed agent instances
-- Configurable pool size (default: 5 agents per type)
-- Lazy loading of agents
-- Cached tool catalog per agent instance
-- Cached system prompt per agent instance
-- Thread-safe pool management
+### 14. Agent Pooling Infrastructure — REMOVED
+`agents/agent_pool.py` was never referenced by any call path — dead code with
+an unmeasured "2-5x faster" claim. It has been deleted. The tool-catalog /
+system-prompt caching that did land lives in `agents/reasoning.py` (see #15).
 
 ### 15. Optimized Tool Catalog Caching
 **Files Modified:**
@@ -210,31 +200,18 @@ This document summarizes all performance optimizations implemented to make Emma 
 - Automatic cache size management
 - TTL increases for frequently accessed items
 
-### 17. Request Batching Infrastructure
-**Files Modified:**
-- `orchestration/request_batcher.py` - NEW: Request batching system
+### 17. Request Batching — Integrated into the Embedder
+`orchestration/request_batcher.py` (single drain-worker batch queue) is wired
+into `memory/embeddings.py`: concurrent `embed()` calls coalesce into one
+Ollama `/api/embed` multi-input call, gated on the embedding model being
+installed so the batch window is never paid when batching can't help. The
+"2-5x faster" figure was never benchmarked — real impact depends on workload
+concurrency.
 
-**Impact:** 2-5x faster for bulk operations
-
-**Details:**
-- Batch similar operations together
-- Reduce API call overhead
-- Automatic batch size optimization
-- Configurable wait times
-- Async batch processing
-
-### 18. Speculative Execution Framework
-**Files Modified:**
-- `orchestration/speculative_executor.py` - NEW: Speculative execution system
-
-**Impact:** 2-3x faster for predictable patterns
-
-**Details:**
-- Predict likely next operations
-- Pre-execute for faster response
-- Cache speculative results
-- Pattern probability tracking
-- Cooldown management
+### 18. Speculative Execution Framework — REMOVED
+`orchestration/speculative_executor.py` was never referenced by any call path
+(unbounded patterns dict, dead code) and its "2-3x faster" claim was never
+measured. It has been deleted.
 
 ### 19. Performance Monitoring System
 **Files Modified:**
@@ -269,24 +246,26 @@ Added to `requirements.txt` and `pyproject.toml`:
 - `aiofiles>=23.2.1` - Async file I/O
 - `orjson>=3.9.10` - Fast JSON serialization
 
-## Performance Estimates
+## Performance Estimates — NONE MEASURED
 
-Based on the implemented optimizations:
+Every figure below is an unverified engineering estimate; no before/after
+benchmark was run for any optimization in this document:
 
-- **HTTP Operations:** 10-50x faster (connection pooling)
-- **Database Operations:** 5-20x faster (pooling + optimization)
-- **Repeated Operations:** 50-100x faster (caching)
-- **File Operations:** 2-5x faster (async I/O)
-- **Intent Classification:** 10-50ms faster per request (optimized patterns)
-- **Memory Recall:** 2-10x faster (early termination + caching)
-- **Network Transfer:** 2-5x faster (compression)
-- **JSON Serialization:** 2-3x faster (orjson)
-- **TTS Synthesis:** 2-5x faster (extended caching)
-- **Batch Embedding:** 5-10x faster (batch operations)
-- **Supabase Operations:** 2-5x faster (circuit breaker + health caching)
-- **Agent Initialization:** 2-5x faster (pooling + caching)
+- HTTP Operations: 10-50x (connection pooling) — estimated
+- Database Operations: 5-20x (pooling + optimization) — estimated
+- Repeated Operations: 50-100x (caching) — estimated
+- File Operations: 2-5x (async I/O) — estimated
+- Intent Classification: 10-50ms faster (optimized patterns) — estimated
+- Memory Recall: 2-10x (early termination + caching) — estimated
+- Network Transfer: 2-5x (compression) — estimated
+- JSON Serialization: 2-3x (orjson) — estimated
+- TTS Synthesis: 2-5x (extended caching) — estimated
+- Batch Embedding: 5-10x (batch operations) — estimated
+- Supabase Operations: 2-5x (circuit breaker + health caching) — estimated
 
-**Combined Estimated Improvement:** 200-1000x overall for typical workloads with repeated operations
+No combined figure is quoted: compounding unmeasured estimates into a
+"200-1000x" headline would be fiction. Use the performance monitor
+(`performance/monitor.py`, `/api/performance/stats`) for real numbers.
 
 ## Testing Recommendations
 
@@ -297,7 +276,6 @@ Based on the implemented optimizations:
 5. **Error Handling:** Verify proper fallback when optimizations fail
 6. **Circuit Breaker:** Test circuit breaker behavior with forced failures
 7. **Batch Operations:** Benchmark batch vs individual operations
-8. **Agent Pool:** Test pool reuse under load
 
 ## Monitoring
 
@@ -308,7 +286,6 @@ Key metrics to monitor:
 - Response times by operation type
 - Memory usage over time
 - Circuit breaker state and resets
-- Agent pool hit/miss rates
 - Batch operation efficiency
 
 ## Rollback Plan
@@ -321,6 +298,8 @@ If any optimization causes issues:
 
 ## Conclusion
 
-All Phase 1 and Phase 2 optimizations have been successfully implemented and tested. Emma is now significantly faster and more efficient, with proper resource management, caching throughout the system, circuit breaker patterns, and agent pooling infrastructure. The server is running successfully with all optimizations active.
-
-**Total Estimated Performance Improvement:** 200-1000x overall for typical workloads with repeated operations.
+The optimizations are implemented and the test suite passes. How much faster
+Emma actually is remains **unmeasured** — every speedup in this document is an
+estimate (see the Performance Estimates section). The dead-code modules (agent
+pooling, speculative execution) were removed; the request batcher is integrated
+into the embedder.

@@ -17,14 +17,26 @@ def _perf_monitor():
         return None
 
 
-def _get_embedder_stats():
-    """Get embedder cache statistics."""
+def _get_embedder_stats(request: Request) -> dict:
+    """Embedder batching + cache effectiveness from the running pipeline.
+
+    The batcher stats make coalescing observable in the running app: after a
+    wave of concurrent embeds, batches_completed stays low while
+    requests_processed grows — the ratio is the average batch size.
+    """
     try:
-        from agents.router import Pipeline
-        # This would need to be passed in via request state
-        return {"status": "available"}
-    except ImportError:
-        return {"status": "not_available"}
+        pipeline = getattr(request.app.state, "pipeline", None)
+        if pipeline is None or not hasattr(pipeline, "embedder"):
+            return {"status": "no_embedder"}
+        embedder = pipeline.embedder
+        batcher = getattr(embedder, "_batcher", None)
+        return {
+            "status": "ok",
+            "batcher": batcher.stats() if batcher is not None else None,
+            "cache": embedder.get_cache_stats(),
+        }
+    except Exception as exc:
+        return {"status": "error", "detail": str(exc)}
 
 
 @router.get("/stats")
@@ -37,7 +49,10 @@ async def get_performance_stats(request: Request):
             content={"detail": "Performance monitoring not available"}
         )
     
-    return monitor.get_metrics_summary()
+    summary = monitor.get_metrics_summary()
+    if isinstance(summary, dict):
+        summary["embedder"] = _get_embedder_stats(request)
+    return summary
 
 
 @router.get("/latency/{operation}")

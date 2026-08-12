@@ -48,52 +48,55 @@ class AdaptiveCache:
         self._cache: OrderedDict[str, CacheEntry] = OrderedDict()
         self._hits = 0
         self._misses = 0
-        self._lock = threading.Lock()
+        # RLock: set() calls _evict() with the lock already held.
+        self._lock = threading.RLock()
     
     def get(self, key: str) -> Optional[Any]:
         """Get value from cache with hit tracking."""
-        entry = self._cache.get(key)
-        if entry is None:
-            self._misses += 1
-            return None
-        
-        # Check if expired
-        if time.monotonic() - entry.timestamp > entry.ttl:
-            del self._cache[key]
-            self._misses += 1
-            return None
-        
-        # Update access pattern
-        entry.access_count += 1
-        if self.eviction_policy == EvictionPolicy.LRU:
-            self._cache.move_to_end(key)
-        
-        # Adaptive TTL: increase TTL for frequently accessed items
-        if self.adaptive_ttl and entry.access_count > 5:
-            entry.ttl = min(entry.ttl * 1.5, entry.initial_ttl * 10)
-        
-        self._hits += 1
-        return entry.value
+        with self._lock:
+            entry = self._cache.get(key)
+            if entry is None:
+                self._misses += 1
+                return None
+            
+            # Check if expired
+            if time.monotonic() - entry.timestamp > entry.ttl:
+                del self._cache[key]
+                self._misses += 1
+                return None
+            
+            # Update access pattern
+            entry.access_count += 1
+            if self.eviction_policy == EvictionPolicy.LRU:
+                self._cache.move_to_end(key)
+            
+            # Adaptive TTL: increase TTL for frequently accessed items
+            if self.adaptive_ttl and entry.access_count > 5:
+                entry.ttl = min(entry.ttl * 1.5, entry.initial_ttl * 10)
+            
+            self._hits += 1
+            return entry.value
     
     def set(self, key: str, value: Any, ttl: Optional[float] = None) -> None:
         """Set value in cache with adaptive sizing."""
-        if ttl is None:
-            ttl = self.default_ttl
-        
-        # Evict if at capacity
-        if len(self._cache) >= self.max_size and key not in self._cache:
-            self._evict()
-        
-        entry = CacheEntry(
-            value=value,
-            timestamp=time.monotonic(),
-            access_count=0,
-            ttl=ttl,
-            initial_ttl=ttl
-        )
-        self._cache[key] = entry
-        if self.eviction_policy == EvictionPolicy.LRU:
-            self._cache.move_to_end(key)
+        with self._lock:
+            if ttl is None:
+                ttl = self.default_ttl
+            
+            # Evict if at capacity (lock already held — _evict stays unlocked)
+            if len(self._cache) >= self.max_size and key not in self._cache:
+                self._evict()
+            
+            entry = CacheEntry(
+                value=value,
+                timestamp=time.monotonic(),
+                access_count=0,
+                ttl=ttl,
+                initial_ttl=ttl
+            )
+            self._cache[key] = entry
+            if self.eviction_policy == EvictionPolicy.LRU:
+                self._cache.move_to_end(key)
     
     def _evict(self) -> None:
         """Evict entries based on policy."""
@@ -115,30 +118,33 @@ class AdaptiveCache:
     
     def clear(self) -> None:
         """Clear all cache entries."""
-        self._cache.clear()
-        self._hits = 0
-        self._misses = 0
+        with self._lock:
+            self._cache.clear()
+            self._hits = 0
+            self._misses = 0
     
     def stats(self) -> Dict[str, Any]:
         """Get cache statistics."""
-        total = self._hits + self._misses
-        hit_rate = self._hits / total if total > 0 else 0
-        return {
-            "size": len(self._cache),
-            "max_size": self.max_size,
-            "hits": self._hits,
-            "misses": self._misses,
-            "hit_rate": hit_rate,
-            "eviction_policy": self.eviction_policy.value
-        }
+        with self._lock:
+            total = self._hits + self._misses
+            hit_rate = self._hits / total if total > 0 else 0
+            return {
+                "size": len(self._cache),
+                "max_size": self.max_size,
+                "hits": self._hits,
+                "misses": self._misses,
+                "hit_rate": hit_rate,
+                "eviction_policy": self.eviction_policy.value
+            }
     
     def cleanup_expired(self) -> int:
         """Remove expired entries, return count removed."""
-        now = time.monotonic()
-        expired_keys = [
-            key for key, entry in self._cache.items()
-            if now - entry.timestamp > entry.ttl
-        ]
-        for key in expired_keys:
-            del self._cache[key]
-        return len(expired_keys)
+        with self._lock:
+            now = time.monotonic()
+            expired_keys = [
+                key for key, entry in self._cache.items()
+                if now - entry.timestamp > entry.ttl
+            ]
+            for key in expired_keys:
+                del self._cache[key]
+            return len(expired_keys)

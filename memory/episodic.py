@@ -10,6 +10,7 @@ OPTIMIZATIONS:
 - Efficient similarity scoring with early termination
 - Batch embedding support
 - Caching of recent queries
+- Batch Supabase inserts (concurrent remembers coalesce into one PostgREST call)
 - Performance monitoring
 """
 
@@ -27,6 +28,7 @@ import threading
 
 from memory.embeddings import Embedder
 from memory.supabase_client import SupabaseClient, SupabaseError
+from orchestration.request_batcher import RequestBatcher
 
 # Import performance monitoring
 try:
@@ -49,6 +51,13 @@ CREATE INDEX IF NOT EXISTS idx_episodes_ts ON episodes(ts);
 CREATE INDEX IF NOT EXISTS idx_episodes_kind ON episodes(kind);
 """
 
+# Coalescing window for Supabase episode inserts: concurrent remember() calls
+# in one wave are combined into a single PostgREST insert.  A lone remember
+# pays this window (same tradeoff as the embedder's batch window); with
+# concurrent remembers it saves N-1 round trips.
+INSERT_BATCH_WINDOW_S = 0.05
+INSERT_BATCH_MAX_SIZE = 50
+
 
 class EpisodicMemory:
     def __init__(
@@ -66,6 +75,16 @@ class EpisodicMemory:
         # Cache for recent query results
         self._query_cache = {}
         self._cache_ttl = 60  # seconds
+        # Coalesce concurrent remember() calls into one Supabase insert.
+        # Only wired up when Supabase is configured; otherwise remember()
+        # writes straight to SQLite with no batch window.
+        self._insert_batcher = None
+        if supabase is not None and supabase.is_configured():
+            self._insert_batcher = RequestBatcher(
+                batch_processor=self._insert_batch_processor,
+                max_batch_size=INSERT_BATCH_MAX_SIZE,
+                max_wait_time=INSERT_BATCH_WINDOW_S,
+            )
         with self._connect() as conn:
             conn.executescript(_SCHEMA)
 
@@ -93,20 +112,20 @@ class EpisodicMemory:
         if self.embedder is not None:
             embedding = await self.embedder.embed(content)
         
-        # Try Supabase first (primary storage)
-        if self.supabase and self.supabase.is_configured():
+        # Try Supabase first (primary storage).  Concurrent remembers are
+        # coalesced by the batcher into one PostgREST insert; the processor
+        # raises SupabaseError on failure, and any batcher shutdown rejects
+        # in-flight futures — both fall through to SQLite so remember() never
+        # breaks the turn.
+        if self._insert_batcher is not None:
             try:
-                row = {
-                    "id": episode_id,
-                    "ts": ts,
-                    "kind": kind,
+                return await self._insert_batcher.submit({
                     "content": content,
-                    "payload": json.dumps(payload) if payload is not None else None,
-                    "embedding": json.dumps(embedding) if embedding else None
-                }
-                await self.supabase.insert("episodes", [row])
-                return episode_id
-            except SupabaseError as e:
+                    "kind": kind,
+                    "payload": payload,
+                    "embedding": embedding,
+                })
+            except Exception as e:
                 # Fallback to SQLite if Supabase fails
                 print(f"Supabase storage failed, falling back to SQLite: {e}")
         
@@ -175,6 +194,33 @@ class EpisodicMemory:
                 )
         return episode_ids
 
+    async def _insert_batch_processor(self, items: list[dict]) -> list[str]:
+        """Batch processor for the insert batcher: build rows for a wave of
+        remembers and write them all in ONE PostgREST insert call.
+
+        Embeddings are computed by the callers (they coalesce through the
+        embedder's own batcher) and carried in each item.  Raises SupabaseError
+        on failure so the batcher rejects every future in the batch and each
+        remember() falls back to SQLite individually.
+        """
+        if self.supabase is None or not self.supabase.is_configured():
+            raise SupabaseError("Supabase is not configured")
+        rows = []
+        now = datetime.now(timezone.utc).isoformat()
+        for item in items:
+            episode_id = uuid.uuid4().hex[:12]
+            embedding = item.get("embedding")
+            rows.append({
+                "id": episode_id,
+                "ts": now,
+                "kind": item.get("kind", "episode"),
+                "content": item["content"],
+                "payload": json.dumps(item["payload"]) if item.get("payload") is not None else None,
+                "embedding": json.dumps(embedding) if embedding else None,
+            })
+        await self.supabase.insert("episodes", rows)
+        return [row["id"] for row in rows]
+
     # ------------------------------------------------------------------ read
     def _prune_query_cache(self) -> None:
         """Drop expired query-cache entries so the cache stays bounded.
@@ -210,9 +256,14 @@ class EpisodicMemory:
         if self.supabase and self.supabase.is_configured() and self.embedder is not None:
             try:
                 query_vec = await self.embedder.embed(query)
+                # No similarity floor: remote recall must behave like the local
+                # path — top-k by similarity, weak/negative-cosine rows included
+                # when positives are scarce. This also matches the documented
+                # match_episodes(query_embedding, match_count) signature; the
+                # old match_threshold param doesn't exist there and would have
+                # made PostgREST reject the call outright.
                 results = await self.supabase.rpc("match_episodes", {
                     "query_embedding": query_vec,
-                    "match_threshold": 0.7,
                     "match_count": k
                 })
                 if results:
@@ -277,7 +328,10 @@ class EpisodicMemory:
         self._query_cache.clear()
 
     async def close(self) -> None:
-        """Clean up database connections."""
+        """Clean up database connections and the insert batcher."""
+        if self._insert_batcher is not None:
+            await self._insert_batcher.close()
+            self._insert_batcher = None
         if hasattr(self._local, 'connection') and self._local.connection:
             self._local.connection.close()
             self._local.connection = None
