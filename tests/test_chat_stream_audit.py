@@ -37,7 +37,7 @@ class _FakeReasoning:
     async def plan(self, request, context=""):
         return []
 
-    async def stream_narration(self, request, context, outputs):
+    async def stream_narration(self, request, context, outputs, images=None):
         if self.exc is not None:
             raise self.exc
         for token in self.tokens:

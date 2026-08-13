@@ -18,10 +18,11 @@ Defaults for the four decisions:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import textwrap
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
 
 from typing import TYPE_CHECKING
 
@@ -46,6 +47,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from agents.base import AgentResult, BaseAgent
+from security.guardian import ConsentRequiredError
 
 if TYPE_CHECKING:
     from agents.router import Pipeline
@@ -54,6 +56,10 @@ if TYPE_CHECKING:
 class {class_name}(BaseAgent):
     name = "{name}"
     description = "{description}"
+
+    # Assigned Ollama model — this agent's LLM calls use it directly
+    # (None = the normal router path: cloud gemma4 primary / local fallback).
+    ollama_model = {ollama_model}
 
     # Tool allowlist — least-privilege scoping.
     tool_allowlist = frozenset({{{allowlist}}})
@@ -71,6 +77,24 @@ class {class_name}(BaseAgent):
 
             {body}
 
+            # Synthesize the final answer with THIS agent's own Ollama model
+            # (assigned at creation; falls back to the normal LLM path when
+            # the model is unavailable or unset).  A model hiccup never fails
+            # the turn — gathered outputs are still returned.
+            try:
+                answer = await self.pipeline.llm.complete(
+                    [
+                        {{"role": "system", "content": "You are {name}, a specialist agent. {description}"}},
+                        {{"role": "user", "content": "Task: " + request + "\\n\\nFindings:\\n" + ("\\n\\n".join(outputs) if outputs else "(none)")}},
+                    ],
+                    temperature=0.6,
+                    max_tokens=600,
+                    model=self.ollama_model or None,
+                )
+                outputs.append(answer)
+            except Exception:
+                pass  # keep going with whatever the tools gathered
+
             self._audit("{name}.completed", detail={{"outputs": len(outputs)}})
 
             return AgentResult(
@@ -80,6 +104,8 @@ class {class_name}(BaseAgent):
                 actions=actions,
             )
 
+        except ConsentRequiredError:
+            raise  # surface the consent gate to the operator/router
         except Exception as exc:
             self._audit("{name}.failed", detail={{"error": str(exc)}})
             return AgentResult(
@@ -95,6 +121,8 @@ AGENT_MANIFEST_TEMPLATE = '''# Auto-generated agent manifest.
 name: {name}
 description: "{description}"
 class: agents.{module_name}.{class_name}
+# The Ollama model this sub-agent runs its LLM calls on (null = default).
+ollama_model: {ollama_model}
 tool_allowlist:
 {allowlist_yaml}max_plan_steps: {max_plan_steps}
 handoff_to:
@@ -108,12 +136,16 @@ class AgentFactory(BaseAgent):
     name = "agent_factory"
     description = "Designs, generates, and registers new specialist sub-agents on demand."
 
-    # The factory needs broad access to read existing agents and write new ones.
+    # The factory needs broad access to read existing agents, write new ones,
+    # and research models online (web_search feeds _pick_model when the request
+    # says "search for the best <X> model on ollama").
     tool_allowlist = frozenset({
         "read_file",
         "write_file",
         "list_dir",
         "run_command",
+        "web_search",
+        "ollama_registry_search",
     })
 
     def __init__(self, pipeline: "Pipeline") -> None:
@@ -130,8 +162,10 @@ class AgentFactory(BaseAgent):
         self._audit("factory.started", detail={"request": request[:200]})
 
         try:
-            # Step 1: Design the agent spec.
+            # Step 1: Design the agent spec (incl. the assigned Ollama model,
+            # picked from the request or researched online).
             spec = self._design_agent(request)
+            spec["ollama_model"] = await self._pick_model(request)
 
             # Step 2: Generate the Python module.
             module_code = self._generate_module(spec)
@@ -199,7 +233,7 @@ class AgentFactory(BaseAgent):
         tags = []
 
         if any(w in low for w in ("search", "find", "lookup", "research", "web")):
-            tools.update(["web_search", "fetch_page"])
+            tools.update(["web_search", "ollama_registry_search", "fetch_page"])
             tags.append("research")
 
         if any(w in low for w in ("file", "read", "document", "parse", "analyze")):
@@ -251,23 +285,39 @@ class AgentFactory(BaseAgent):
             "tags": tags or ["general"],
             "max_plan_steps": 5,
             "handoff_to": ["reasoning", "control"],
+            "ollama_model": None,  # filled by run() -> _pick_model()
             "body": body,
         }
 
-    def _extract_name(self, task: str) -> str:
-        """Extract a short agent name from the task description."""
-        # Try to find "an agent that ..." pattern.
+    @staticmethod
+    def _sanitize_name(name: str) -> str:
+        """A filesystem-safe agent name: lowercase alphanumerics + underscore."""
         import re
-        m = re.search(r"(?:an?|the)\s+agent\s+(?:that\s+)?(\w+)", task, re.IGNORECASE)
-        if m:
-            return m.group(1).lower()[:20]
+        return re.sub(r"[^a-z0-9_]", "", (name or "").lower())[:20]
 
-        # Use the first meaningful word.
+    def _extract_name(self, task: str) -> str:
+        """Extract a short, filesystem-safe agent name from the task description."""
+        import re
+        # "a sub agent called coder" — an explicit name beats the role word.
+        m = re.search(r"\bcalled\s+([\w-]+)", task, re.IGNORECASE)
+        if m:
+            return self._sanitize_name(m.group(1))
+        # "a coder agent" / "a code reviewer agent" — the role is the name
+        # (multi-word roles become snake_case: code reviewer -> code_reviewer).
+        m = re.search(r"\b(?:a|an)\s+([\w\s-]+?)\s+agent\b", task, re.IGNORECASE)
+        if m:
+            return self._sanitize_name(m.group(1).strip().replace(" ", "_"))
+        # "an agent that monitors X" / "an agent which fetches Y".
+        m = re.search(r"\bagent\s+(?:that|which)\s+(\w+)", task, re.IGNORECASE)
+        if m:
+            return self._sanitize_name(m.group(1))
+        # First meaningful word, sanitized.
         words = task.lower().split()
-        skip = {"create", "build", "make", "design", "add", "a", "an", "the", "that", "which", "can", "agent"}
+        skip = {"create", "build", "make", "design", "add", "a", "an", "the", "that", "which", "can", "agent", "factory"}
         for w in words:
-            if w not in skip and len(w) > 2:
-                return w[:20]
+            clean = self._sanitize_name(w)
+            if clean and clean not in skip and len(clean) > 2:
+                return clean
         return "custom_agent"
 
     def _to_class_name(self, name: str) -> str:
@@ -303,12 +353,12 @@ class AgentFactory(BaseAgent):
 
         if "read_file" in tools and "web_search" not in tools:
             lines.append(textwrap.dedent("""\
-                # Read files as part of the task.
+                # Gather context about the working directory.
                 output = await self.pipeline.control.execute(
-                    "read_file", actor=self.name, path="."
+                    "list_dir", actor=self.name, path="."
                 )
-                outputs.append(f"Context: {str(output)[:500]}")
-                actions.append({"tool": "read_file", "args": {"path": "."}})"""))
+                outputs.append(f"Directory context: {str(output)[:500]}")
+                actions.append({"tool": "list_dir", "args": {"path": "."}})"""))
 
         if "run_command" in tools:
             lines.append(textwrap.dedent("""\
@@ -335,7 +385,97 @@ class AgentFactory(BaseAgent):
                 # Default: process the request and return a result.
                 outputs.append(f"Agent '{self.name}' processed: {request[:200]}")"""))
 
-        return "\n\n            ".join(lines)
+        return "\n\n".join(lines)  # col-0; _generate_module indents into the try block
+
+    # ---------------------------------------------------------------- model
+    def _explicit_model(self, task: str) -> Optional[str]:
+        """An Ollama model named directly in the request.
+
+        Matches 'model: qwen2.5-coder:7b', 'use qwen2.5-coder:7b', or a bare
+        ollama-style tag (name:tag).
+        """
+        import re
+        for pattern in (
+            r"\bmodel\s*[:=]\s*([\w.\-]+:[\w.\-]+)",
+            r"\buse\s+([\w.\-]+:[\w.\-]+)",
+            r"\b([a-z0-9][\w.\-]*:[a-z0-9][\w.\-]*)",
+        ):
+            m = re.search(pattern, task, re.IGNORECASE)
+            if m:
+                return m.group(1)
+        return None
+
+    async def _pick_model(self, task: str) -> Optional[str]:
+        """Decide the Ollama model for the new sub-agent.
+
+        1. Explicit model in the request ("use qwen2.5-coder:7b").
+        2. "search/best/find" phrasing: web-search for the best model for the
+           task and let the LLM pick a concrete ollama tag (e.g. the user's
+           example: find the best free coding agent on ollama -> assign it).
+        3. Otherwise None (the agent uses the normal router path).
+        """
+        explicit = self._explicit_model(task)
+        if explicit:
+            return explicit
+        low = task.lower()
+        if any(w in low for w in ("search", "best", "find", "recommend")):
+            # Try Ollama's own registry first — it returns concrete model names
+            # (e.g. qwen3-coder-next, devstral) instead of generic web hits, and
+            # is not anti-bot-gated like the general search engines.  It needs a
+            # concise keyword query ("coder"), not a full sentence.
+            registry_query = self._extract_name(task) or task
+            try:
+                search_out = await self.pipeline.control.execute(
+                    "ollama_registry_search", actor=self.name, query=registry_query, n=10
+                )
+            except Exception:
+                search_out = []
+            # control.execute returns JSON text for structured results; be
+            # tolerant of plain-text search output too (wrap it for the LLM).
+            if isinstance(search_out, str):
+                try:
+                    search_out = json.loads(search_out)
+                except Exception:
+                    search_out = [{"model": search_out[:120], "description": ""}]
+            if not search_out:
+                # Registry search failed — fall back to general web search.
+                try:
+                    query = f"best free ollama model for {self._extract_name(task)} agent"
+                    search_out = await self.pipeline.control.execute(
+                        "web_search", actor=self.name, query=query, n=6
+                    )
+                except Exception:
+                    search_out = []
+                if isinstance(search_out, str):
+                    try:
+                        search_out = json.loads(search_out)
+                    except Exception:
+                        search_out = [{"model": search_out[:120], "description": ""}]
+            if search_out:
+                try:
+                    choice = await asyncio.wait_for(
+                        self.pipeline.llm.complete(
+                            [
+                                {"role": "system", "content": "You choose the best Ollama model tag for a sub-agent from the search results. Prefer exact registry model names (e.g. qwen3-coder-next, devstral:24b, qwen2.5-coder:7b). Return ONLY the model tag. If nothing fits, return the single word 'none'."},
+                                {"role": "user", "content": f"Sub-agent task: {task}\n\nSearch results:\n{str(search_out)[:2500]}"},
+                            ],
+                            temperature=0.2,
+                            max_tokens=30,
+                        ),
+                        timeout=45,
+                    )
+                    choice = (choice or "").strip().strip('"').strip("'")
+                    if choice and choice.lower() != "none":
+                        # Accept a tagged model (qwen3-coder:30b) or a bare name
+                        # that actually came back from the registry search.
+                        if ":" in choice:
+                            return choice
+                        known = {r.get("model", "").lower() for r in search_out if isinstance(r, dict)}
+                        if choice.lower() in known:
+                            return choice
+                except Exception:
+                    pass  # research failed — fall back to the default router path
+        return None
 
     # ---------------------------------------------------------------- generate
     def _generate_module(self, spec: dict[str, Any]) -> str:
@@ -348,7 +488,8 @@ class AgentFactory(BaseAgent):
             task=spec["task"],
             date=date.today().isoformat(),
             allowlist=", ".join(f'"{t}"' for t in spec["tools"]),
-            body=spec["body"],
+            body=textwrap.indent(spec["body"], "            "),
+            ollama_model=repr(spec.get("ollama_model")),  # None or 'model:tag'
         )
 
     def _generate_manifest(self, spec: dict[str, Any]) -> str:
@@ -366,6 +507,7 @@ class AgentFactory(BaseAgent):
             max_plan_steps=spec["max_plan_steps"],
             handoff_to_yaml=handoff_yaml,
             tags_yaml=tags_yaml,
+            ollama_model=spec.get("ollama_model") or "null",
         )
 
     # ---------------------------------------------------------------- write
@@ -447,6 +589,7 @@ class AgentFactory(BaseAgent):
             f"**Manifest:** `{manifest_path}`",
             f"**Tools:** {', '.join(spec['tools'])}",
             f"**Tags:** {', '.join(spec['tags'])}",
+            f"**Ollama model:** {spec.get('ollama_model') or '(default routing)'}",
             f"**Handoff targets:** {', '.join(spec['handoff_to'])}",
             "",
             f"### What was generated:",

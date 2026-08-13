@@ -55,6 +55,9 @@ class AgentManifest:
     max_plan_steps: Optional[int] = None
     handoff_to: list[str] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
+    # The Ollama model this agent runs its LLM calls on (sub-agent binding).
+    # None = the normal router path (cloud gemma4 primary / local fallback).
+    ollama_model: Optional[str] = None
     source_file: str = ""
 
     def to_dict(self) -> dict:
@@ -66,6 +69,7 @@ class AgentManifest:
             "max_plan_steps": self.max_plan_steps,
             "handoff_to": self.handoff_to,
             "tags": self.tags,
+            "ollama_model": self.ollama_model,
             "source_file": self.source_file,
         }
 
@@ -159,6 +163,7 @@ class AgentRegistry:
             max_plan_steps=data.get("max_plan_steps"),
             handoff_to=data.get("handoff_to", []),
             tags=data.get("tags", []),
+            ollama_model=data.get("ollama_model") or data.get("model"),
             source_file=str(path),
         )
 
@@ -208,6 +213,7 @@ class AgentRegistry:
             max_plan_steps=data.get("max_plan_steps"),
             handoff_to=data.get("handoff_to", []),
             tags=data.get("tags", []),
+            ollama_model=data.get("ollama_model") or data.get("model"),
             source_file=str(path),
         )
 
@@ -251,6 +257,9 @@ class AgentRegistry:
             module = importlib.import_module(module_path)
             cls = getattr(module, class_name)
             instance = cls(pipeline)
+            # Per-agent LLM binding: the generated agent reads this attribute
+            # and passes it to pipeline.llm.complete/stream(model=...).
+            instance.ollama_model = manifest.ollama_model
             with self._lock:
                 self._instances[name] = instance
             logger.info("Instantiated agent '%s' from %s", name, manifest.class_path)

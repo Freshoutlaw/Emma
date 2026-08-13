@@ -44,8 +44,41 @@ class BrowserAutomation:
         from playwright.async_api import async_playwright
 
         self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.launch(headless=True)
+        self._browser = await self._launch()
         self._page = await self._browser.new_page()
+
+    async def _launch(self):
+        """Launch a headless Chromium, falling back to the system Edge/Chrome.
+
+        Playwright's bundled chromium needs `playwright install chromium`
+        (~150MB download).  On machines where that hasn't been run (e.g. a
+        Windows box with Edge preinstalled), use the system browser instead
+        so screenshot/automation tools work out of the box.
+        """
+        import os
+
+        candidates: list[dict] = [{}]  # bundled chromium (dev machines)
+        candidates.append({"channel": "msedge"})  # installed Edge
+        for path in (
+            r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+            r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        ):
+            if os.path.exists(path):
+                candidates.append({"executable_path": path})
+                break
+        last_error: Optional[Exception] = None
+        for kwargs in candidates:
+            try:
+                return await self._playwright.chromium.launch(headless=True, **kwargs)
+            except Exception as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError(
+            "no chromium available — run `playwright install chromium` "
+            "or install Microsoft Edge / Google Chrome"
+        )
 
     # ------------------------------------------------------------------ api
     async def open(self, url: str) -> dict:

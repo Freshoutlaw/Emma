@@ -40,11 +40,21 @@ class CloudLLM:
         return self._groq_client
 
     # ---------------------------------------------------------------- chat
+    @staticmethod
+    def _strip_images(messages: list[dict]) -> list[dict]:
+        """Groq's configured model (llama-3.3-70b-versatile) is text-only.
+
+        Vision narration messages carry an `images` side-channel for Ollama;
+        dropping it here lets the Groq fallback answer textually instead of
+        choking on an unknown message field.
+        """
+        return [{k: v for k, v in m.items() if k != "images"} for m in messages]
+
     async def complete(self, messages: list[dict], temperature: float = 0.7, max_tokens: int = 4096) -> str:
         client = self._client()
         response = await client.chat.completions.create(
             model=self.model,
-            messages=messages,
+            messages=self._strip_images(messages),
             temperature=temperature,
             max_tokens=max_tokens,
         )
@@ -56,7 +66,7 @@ class CloudLLM:
         client = self._client()
         stream = await client.chat.completions.create(
             model=self.model,
-            messages=messages,
+            messages=self._strip_images(messages),
             temperature=temperature,
             max_tokens=max_tokens,
             stream=True,

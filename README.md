@@ -210,13 +210,15 @@ the HUD opens it manually.
 - Recall ranks episodes by cosine similarity; the **RAG pipeline** injects the
   top matches into the LLM context automatically.
 - **Supabase / pgvector sync** is optional. Enable it by setting
-  `EMMA_SUPABASE_URL` + `EMMA_SUPABASE_SERVICE_KEY` and creating the RPC:
+  `EMMA_SUPABASE_URL` + `EMMA_SUPABASE_SERVICE_KEY`. The one-time schema
+  (`episodes` table + RPC) lives in `infrastructure/supabase/schema.sql` —
+  run it in the Supabase SQL Editor, or create just the RPC:
 
 ```sql
 create or replace function match_episodes(query_embedding vector(384), match_count int)
 returns table (id text, content text, kind text, created_at timestamptz, similarity float)
 language sql stable as $$
-  select e.id, e.content, e.kind, e.created_at,
+  select e.id, e.content, e.kind, e.ts,
          1 - (e.embedding <=> query_embedding) as similarity
   from episodes e
   order by e.embedding <=> query_embedding

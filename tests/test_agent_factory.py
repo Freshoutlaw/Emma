@@ -165,7 +165,8 @@ class TestResearchAgent:
         from agents.agent_factory import AgentFactory
         agent = object.__new__(AgentFactory)
         assert agent._extract_name("Create an agent that monitors GitHub") == "monitors"
-        assert agent._extract_name("Build a data analysis agent") == "data"
+        assert agent._extract_name("Build a data analysis agent") == "data_analysis"
+        assert agent._extract_name("assign it to a sub agent called coder") == "coder"
 
     def test_to_class_name(self):
         from agents.agent_factory import AgentFactory
@@ -182,7 +183,7 @@ class TestAgentFactory:
         from agents.agent_factory import AgentFactory
         assert "write_file" in AgentFactory.tool_allowlist
         assert "read_file" in AgentFactory.tool_allowlist
-        assert "web_search" not in AgentFactory.tool_allowlist
+        assert "web_search" in AgentFactory.tool_allowlist  # model research for _pick_model
 
     def test_design_agent_search(self):
         from agents.agent_factory import AgentFactory

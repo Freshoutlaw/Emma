@@ -13,9 +13,12 @@ import re
 from typing import TYPE_CHECKING, Any, AsyncIterator, Optional
 
 from agents.base import AgentResult, BaseAgent
-from agents.control import ControlAgent, ToolNotAllowedError
+from agents.control import ControlAgent, ToolNotAllowedError, summarize_tool_output
 from llm.local import LLMUnavailable
 from security.guardian import ConsentRequiredError
+
+# Tools whose results are raw image bytes meant for the vision model.
+SCREENSHOT_TOOLS = frozenset({"desktop_screenshot", "browser_screenshot"})
 
 if TYPE_CHECKING:
     from agents.router import Pipeline
@@ -163,6 +166,16 @@ class ReasoningAgent(BaseAgent):
         instead of emitting JSON), so common requests still execute tools.
         """
         low = message.lower()
+        # Screenshot asks must resolve deterministically too — "what's on my
+        # screen" is ≤5 words so it skips the LLM plan entirely.  The bytes
+        # flow into narration as vision content (gemma4 cloud / any local
+        # multimodal model).
+        if "browser" in low and "screenshot" in low:
+            return [{"tool": "browser_screenshot", "args": {}}]
+        if "screenshot" in low or (
+            "screen" in low and any(w in low for w in ("look", "see", "what", "show", "view"))
+        ):
+            return [{"tool": "desktop_screenshot", "args": {}}]
         if "list" in low and any(w in low for w in ("file", "dir", "folder")):
             return [{"tool": "list_dir", "args": {"path": "."}}]
         if "git" in low and "status" in low:
@@ -190,6 +203,7 @@ class ReasoningAgent(BaseAgent):
         actions: list[dict] = []
         outputs: list[str] = []
 
+        images: list[bytes] = []
         for step in steps:
             tool = step.get("tool")
             args = step.get("args", {}) or {}
@@ -220,47 +234,99 @@ class ReasoningAgent(BaseAgent):
                 outputs.append(f"[step '{tool}' failed: {exc}]")
                 continue
             actions.append({"tool": tool, "args": args})
-            outputs.append(output)
+            if isinstance(output, bytes) and tool in SCREENSHOT_TOOLS:
+                # Screenshot bytes go to the vision model; the terminal sees
+                # a short placeholder instead of byte garbage.
+                images.append(output)
+                outputs.append(summarize_tool_output(tool, output))
+            else:
+                outputs.append(output)
 
-        final = await self._synthesize(request, context, outputs)
+        final = await self._synthesize(request, context, outputs, images or None)
         return AgentResult(ok=True, output=final, intent="reasoning", actions=actions)
 
-    async def _synthesize(self, request: str, context: str, outputs: list[str]) -> str:
+    async def _synthesize(
+        self, request: str, context: str, outputs: list[str], images: Optional[list[bytes]] = None
+    ) -> str:
         user = (
             f"User request:\n{request}\n\nRelevant context:\n{context or '(none)'}\n\n"
             f"Tool results:\n{json.dumps(outputs, indent=2) if outputs else '(no tools used)'}\n\n"
             "Respond now — concise, direct, and truthful about what was done."
         )
-        try:
+
+        async def _complete(with_images: bool) -> str:
+            messages: list[dict] = [
+                {"role": "system", "content": "You are Emma, a fully autonomous AI assistant. Complete the user's request."},
+                {"role": "user", "content": user},
+            ]
+            if with_images:
+                messages[1]["images"] = images
             return await asyncio.wait_for(
                 self.pipeline.llm.complete(
-                    [
-                        {"role": "system", "content": "You are Emma, a fully autonomous AI assistant. Complete the user's request."},
-                        {"role": "user", "content": user},
-                    ],
+                    messages,
                     temperature=0.6,
                     max_tokens=self.synth_max_tokens,
                 ),
                 timeout=60,
             )
+
+        try:
+            return await _complete(bool(images))
         except (LLMUnavailable, asyncio.TimeoutError):
+            if images:
+                try:
+                    # Provider reachable but the image may be the blocker
+                    # (e.g. a text-only fallback model) — answer without it.
+                    return await _complete(False)
+                except (LLMUnavailable, asyncio.TimeoutError):
+                    pass
             return "\n".join(outputs) if outputs else (
                 "⚠ No LLM provider available (start Ollama or set GROQ_API_KEY), and no tools were needed."
             )
+        except Exception:
+            if images:
+                return await _complete(False)  # model rejected the image — retry text-only
+            raise
 
-    async def stream_narration(self, request: str, context: str, outputs: list[str]) -> AsyncIterator[str]:
-        """Stream the synthesized final answer token-by-token."""
+    async def stream_narration(
+        self, request: str, context: str, outputs: list[str], images: Optional[list[bytes]] = None
+    ) -> AsyncIterator[str]:
+        """Stream the synthesized final answer token-by-token.
+
+        Screenshot bytes (from `images`) ride on the user message as vision
+        content.  If the active model can't process images (e.g. the text-only
+        local fallback is serving), the first attempt fails before emitting
+        any token and narration retries once without the image rather than
+        failing the whole turn.
+        """
         user = (
             f"User request:\n{request}\n\nRelevant context:\n{context or '(none)'}\n\n"
             f"Tool results:\n{json.dumps(outputs, indent=2) if outputs else '(no tools used)'}\n\n"
             "Respond now — concise, direct, and truthful about what was done."
         )
-        async for token in self.pipeline.llm.stream(
-            [
+
+        async def _stream(with_images: bool):
+            messages: list[dict] = [
                 {"role": "system", "content": "You are Emma, a fully autonomous AI assistant. Complete the user's request."},
                 {"role": "user", "content": user},
-            ],
-            temperature=0.6,
-            max_tokens=self.synth_max_tokens,
-        ):
-            yield token
+            ]
+            if with_images:
+                messages[1]["images"] = images
+            async for token in self.pipeline.llm.stream(
+                messages,
+                temperature=0.6,
+                max_tokens=self.synth_max_tokens,
+            ):
+                yield token
+
+        emitted = False
+        try:
+            async for token in _stream(bool(images)):
+                emitted = True
+                yield token
+        except Exception:
+            if images and not emitted:
+                async for token in _stream(False):
+                    yield token
+                return
+            raise

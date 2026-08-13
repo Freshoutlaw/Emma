@@ -21,6 +21,14 @@ let isRecording = false;
 let silenceTimer = null;
 let recordingTimeout = null;
 let isTextInputVisible = false;
+let micEnabled = true;          // user hasn't muted via the 🎙 button
+let lastNothingHeard = 0;        // throttle for the always-on silence loop
+let silenceAudioContext = null;  // closed between cycles (always-on leaks contexts)
+let recordedSpeech = false;      // did this recording contain real audio? (skip silent ones)
+let attachedImage = null;        // { name, dataUrl } — image the user wants Emma to describe
+let liveWatching = false;        // live-watch mode: Emma re-analyzes the image and reports changes
+let liveAbort = null;            // AbortController for the live SSE stream
+let liveReconnects = 0;          // consecutive auto-reconnects after an unexpected drop
 
 // ---------------------------------------------------------------- audio queue
 // Pipelined speak path: the server emits speak_segment events as each
@@ -56,6 +64,12 @@ function unlockAudio() {
 document.addEventListener("pointerdown", unlockAudio, { once: true });
 document.addEventListener("keydown", unlockAudio, { once: true });
 document.addEventListener("touchstart", unlockAudio, { once: true });
+
+// Drag-and-drop image attachment — the whole HUD is a drop target.
+document.addEventListener("dragenter", onDragEnter);
+document.addEventListener("dragover", onDragOver);
+document.addEventListener("dragleave", onDragLeave);
+document.addEventListener("drop", onDrop);
 
 // ---------------------------------------------------------------- helpers
 function addLine(text, cls) {
@@ -170,6 +184,14 @@ function hideAllPanels() {
   displayPayload = null;
 }
 
+function supabaseStatusLabel(s) {
+  if (!s.configured) return "[ DISABLED ]";
+  if (!s.reachable) return "[ UNREACHABLE ]";
+  if (s.schema === "ok") return "[ SYNCED ]";
+  if (s.schema === "missing") return "[ SCHEMA MISSING ]";
+  return "[ UNKNOWN ]";
+}
+
 function generateStatusContent() {
   if (!statusData) return "<p>Loading status...</p>";
   
@@ -180,7 +202,7 @@ function generateStatusContent() {
       <div class="status-row"><span>Ollama</span><span class="highlight">${statusData.services.ollama ? "[ ONLINE ]" : "[ OFFLINE ]"}</span></div>
       <div class="status-row"><span>Groq</span><span class="highlight">${statusData.services.groq ? "[ ONLINE ]" : "[ OFFLINE ]"}</span></div>
       <div class="status-row"><span>MQTT Broker</span><span class="highlight">${statusData.services.mqtt.connected ? "[ CONNECTED ]" : "[ OFFLINE ]"}</span></div>
-      <div class="status-row"><span>Supabase</span><span class="highlight">${statusData.services.supabase.configured ? (statusData.services.supabase.reachable ? "[ SYNCED ]" : "[ UNREACHABLE ]") : "[ DISABLED ]"}</span></div>
+      <div class="status-row"><span>Supabase</span><span class="highlight ${statusData.services.supabase.schema === "missing" ? "alert" : ""}">${supabaseStatusLabel(statusData.services.supabase)}</span></div>
       <div class="status-row"><span>Memory Episodes</span><span class="highlight">${statusData.memory.episodes}</span></div>
     </div>
   `;
@@ -275,6 +297,258 @@ async function loadStatus() {
   } catch (e) { /* transient */ }
 }
 
+// ---------------------------------------------------------------- image attach
+function setAttachedImage(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    attachedImage = { name: file.name || "image", dataUrl: reader.result };
+    $("image-chip-label").textContent = "🖼 " + attachedImage.name;
+    $("image-chip").classList.remove("hidden");
+    $("attach-img-btn").classList.add("active");
+    $("live-btn").classList.remove("hidden");
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearAttachedImage() {
+  // A live watch keeps running on the captured image; if the user removes
+  // the chip while watching, stop the watch too.
+  if (liveWatching) stopLive();
+  attachedImage = null;
+  $("image-input").value = "";
+  $("image-chip").classList.add("hidden");
+  $("attach-img-btn").classList.remove("active");
+  $("live-btn").classList.add("hidden");
+  $("live-btn").classList.remove("active");
+}
+
+// ---------------------------------------------------------------- drag-drop
+// Drag an image file (or an image URL from another tab) onto the HUD to
+// attach it for Emma to describe — same path as the 📷 button.
+let dragDepth = 0;
+
+function isImageFile(file) {
+  return file && (
+    file.type === "image/png" || file.type === "image/jpeg" ||
+    /\\.(png|jpe?g)$/i.test(file.name || "")
+  );
+}
+
+function ensureTextInputOpen() {
+  if (isTextInputVisible) return;
+  isTextInputVisible = true;
+  $("text-input-container").classList.remove("hidden");
+  $("text-toggle-btn").classList.add("active");
+  if (isRecording) stopRecording();
+}
+
+function showDropOverlay() { $("drop-overlay").classList.remove("hidden"); }
+function hideDropOverlay() { $("drop-overlay").classList.add("hidden"); }
+
+function hasFilesInDrag(e) {
+  const types = e.dataTransfer && e.dataTransfer.types;
+  if (!types) return false;
+  const t = Array.from(types);
+  // Accept file drags AND image-URL drags (from another tab or the address
+  // bar, which carry text/uri-list but no File).
+  return t.indexOf("Files") !== -1 || t.indexOf("text/uri-list") !== -1;
+}
+
+function onDragEnter(e) {
+  if (!hasFilesInDrag(e)) return;
+  e.preventDefault();
+  dragDepth++;
+  showDropOverlay();
+}
+
+function onDragOver(e) {
+  if (!hasFilesInDrag(e)) return;
+  e.preventDefault();
+  if (e.dataTransfer) e.dataTransfer.dropEffect = "copy";
+}
+
+function onDragLeave(e) {
+  if (!hasFilesInDrag(e)) return;
+  dragDepth = Math.max(0, dragDepth - 1);
+  if (dragDepth === 0) hideDropOverlay();
+}
+
+function onDrop(e) {
+  if (!hasFilesInDrag(e)) return;
+  e.preventDefault();
+  dragDepth = 0;
+  hideDropOverlay();
+  const dt = e.dataTransfer;
+  const file = dt && dt.files && dt.files[0];
+  if (file) {
+    if (isImageFile(file)) {
+      setAttachedImage(file);
+      ensureTextInputOpen();
+      addLine("📷 " + file.name + " attached — Emma will describe it when you send (or tap 🔴 to watch it live).", "meta");
+    } else {
+      addLine("⚠ Only PNG/JPEG images can be attached.", "error");
+    }
+    return;
+  }
+  // No file — maybe an image URL dragged from another tab.
+  const uri = (dt && (dt.getData("text/uri-list") || dt.getData("text/plain"))) || "";
+  const url = uri.trim().split(/\s+/)[0];
+  if (/^https?:\/\/\S+$/i.test(url)) {
+    ensureTextInputOpen();
+    const input = $("text-input");
+    input.value = url;
+    input.dispatchEvent(new Event("input"));  // reveals the 🔴 watch button
+    addLine("🔗 " + url + " — send to describe it, or tap 🔴 to watch it live.", "meta");
+  }
+}
+
+// ---------------------------------------------------------------- live watch
+// Live mode: Emma re-analyzes a changing source — the attached image, a
+// pasted image URL, the desktop screen, or the browser — every few seconds
+// and speaks up ONLY when the scene changes.  `liveCfg` remembers the active
+// source so auto-reconnects resume the same watch.
+let liveCfg = null;
+
+const WATCH_LABELS = {
+  screen:  { label: "WATCHING SCREEN…",  meta: "👁 watching the screen — Emma will speak up when something changes…",  btn: "watch-screen-btn" },
+  browser: { label: "WATCHING BROWSER…", meta: "👁 watching the browser — Emma will speak up when the page changes…",  btn: "watch-browser-btn" },
+  image:   { label: "WATCHING…",         meta: "👁 watching the image — Emma will report when the scene changes…",      btn: "live-btn" },
+};
+
+function setWatchButtons(activeBtnId) {
+  ["live-btn", "watch-screen-btn", "watch-browser-btn"].forEach((id) => {
+    $(id).classList.toggle("active", id === activeBtnId);
+  });
+}
+
+function startWatch(cfg) {
+  liveCfg = cfg;
+  liveWatching = true;
+  liveReconnects = 0;
+  setWatchButtons(cfg.btnId);
+  addLine(cfg.metaText, "meta");
+  setVoiceStatus(cfg.label, true);
+  liveAbort = new AbortController();
+  runWatchStream();
+}
+
+function toggleLive() {
+  if (liveWatching) {
+    stopLive();
+    return;
+  }
+  let source = attachedImage ? attachedImage.dataUrl : null;
+  if (!source) {
+    const t = $("text-input").value.trim();
+    if (/^https?:\/\/\S+$/i.test(t)) source = t;
+  }
+  if (!source) {
+    addLine("⚠ Attach an image (📷) or paste an image URL (webcam/monitoring feed) to watch it live.", "error");
+    return;
+  }
+  const def = WATCH_LABELS.image;
+  startWatch({ image: source, source: "image", btnId: def.btn, label: def.label, metaText: def.meta });
+}
+
+// 🖥 / 🌐 buttons — watch the desktop screen or the headless browser.
+function toggleScreenWatch(kind, toggle = true) {
+  const def = WATCH_LABELS[kind];
+  if (liveWatching && liveCfg && liveCfg.source === kind) {
+    if (toggle) stopLive();
+    return;
+  }
+  if (liveWatching) stopLive();
+  startWatch({ image: "", source: kind, btnId: def.btn, label: def.label, metaText: def.meta });
+}
+
+function stopLive() {
+  if (liveAbort) {
+    liveAbort.abort();
+    liveAbort = null;
+  }
+  liveWatching = false;
+  liveCfg = null;
+  setWatchButtons(null);
+}
+
+async function runWatchStream() {
+  const cfg = liveCfg;
+  // graceful = ended by design (vision_stop/vision_error/HTTP error); anything
+  // else (network blip, browser throttling) is an unexpected drop we retry.
+  let graceful = false;
+  try {
+    const res = await fetch("/api/chat/vision/live", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        message: "",
+        image: cfg.image,
+        source: cfg.source,
+        interval_seconds: 5,
+        min_change_interval: 15,  // "only when needed": cooldown between spoken changes
+      }),
+      signal: liveAbort.signal,
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      addLine("⚠ " + (body.detail || res.statusText), "error");
+      graceful = true;
+      return;
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const parts = buffer.split("\n\n");
+      buffer = parts.pop();
+      for (const part of parts) {
+        const line = part.trim();
+        if (!line.startsWith("data:")) continue;
+        let event;
+        try { event = JSON.parse(line.slice(5).trim()); } catch (e) { continue; }
+        if (event.type === "vision_stop") graceful = true;
+        // vision_error with retry:true (feed/model blip) is NOT graceful —
+        // the client reconnects; retry:false (text-only model) is.
+        if (event.type === "vision_error" && !event.retry) graceful = true;
+        handleEvent(event);
+      }
+    }
+  } catch (err) {
+    if (!(err && err.name === "AbortError")) {
+      addLine("⚠ live watch error: " + (err && err.message ? err.message : err), "error");
+    }
+  } finally {
+    // stopLive() flips liveWatching to false — capture whether the user (or a
+    // vision event) already stopped this before we got here.
+    const userStopped = !liveWatching;
+    stopLive();
+    if (!attachedImage && cfg.source === "image") $("live-btn").classList.add("hidden");
+    if (!graceful && !userStopped) {
+      // Unexpected drop: reconnect so the watch keeps going.  Vision errors
+      // are graceful (they carry their own message); retries are capped so a
+      // dead source doesn't loop forever.
+      if (liveReconnects < 5) {
+        liveReconnects++;
+        addLine("[watch interrupted — reconnecting…]", "meta");
+        setTimeout(() => {
+          if (liveWatching) return;
+          liveCfg = cfg;
+          liveWatching = true;
+          setWatchButtons(cfg.btnId);
+          if (cfg.source === "image") $("live-btn").classList.remove("hidden");
+          liveAbort = new AbortController();
+          runWatchStream();
+        }, 3000);
+      } else {
+        addLine("⚠ live watch could not reconnect after several attempts — tap the watch button to try again.", "error");
+      }
+    }
+  }
+}
+
 // ---------------------------------------------------------------- chat
 function startReplyLine() {
   const line = document.createElement("div");
@@ -329,7 +603,7 @@ function handleLocalCommand(message) {
 
 async function sendMessage(message) {
   message = (message || "").trim();
-  if (!message) return;
+  if (!message && !attachedImage) return;
   if (streaming) {
     addLine("⚠ Emma is still working — wait for the reply before sending another command.", "error");
     return;
@@ -339,13 +613,31 @@ async function sendMessage(message) {
   // Stop any audio still playing from a previous turn.
   stopAudio();
   pendingMessage = message;
-  addLine("User: " + message, "user");
-  if (handleLocalCommand(message)) return;
+  if (attachedImage) {
+    addLine("User: 📷 " + attachedImage.name + (message ? " — " + message : ""), "user");
+  } else {
+    addLine("User: " + message, "user");
+  }
+  if (!attachedImage && handleLocalCommand(message)) return;
   streaming = true;
   orb.classList.add("thinking");
+  // Only vision turns consume the attached image — text/voice turns must not
+  // disturb an active live watch or a pending attachment.
+  const hadImage = !!attachedImage;
 
   try {
-    const res = await fetch("/api/chat/stream?message=" + encodeURIComponent(message));
+    let res;
+    if (attachedImage) {
+      // 'Describe this image' flow: the image rides along to the vision
+      // endpoint, which narrates what Emma sees (gemma4 cloud primary).
+      res = await fetch("/api/chat/vision", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message, image: attachedImage.dataUrl }),
+      });
+    } else {
+      res = await fetch("/api/chat/stream?message=" + encodeURIComponent(message));
+    }
     if (res.status === 409) {
       const body = await res.json();
       showConsent(body.decision, message);
@@ -379,12 +671,20 @@ async function sendMessage(message) {
     finishReplyLine();
     orb.classList.remove("thinking");
     streaming = false;
+    // The image was consumed by this turn (vision path) — clear it so the
+    // next message goes back to the normal text path.  Text/voice turns
+    // leave the attachment and any live watch untouched.
+    if (hadImage) clearAttachedImage();
     // If the stream ended without speak_segments (non-LLM intent or
-    // LLM unavailable), make sure the audio UI is clean.
+    // LLM unavailable), make sure the audio UI is clean — unless a live
+    // watch is active, whose status label must stay on screen.
     if (!currentlyPlaying && audioQueue.length === 0) {
       activeBaseTurnId = null;
-      setVoiceStatus("HOLD TO TALK", false);
+      if (liveWatching && liveCfg) setVoiceStatus(liveCfg.label, true);
+      else setVoiceStatus("HOLD TO TALK", false);
     }
+    // Whatever the outcome, return to always-on listening.
+    ensureListening();
   }
 }
 
@@ -409,10 +709,42 @@ function handleEvent(event) {
       showConsent(event.decision);
       break;
     case "display":
-      if (event.display) {
-        if (event.display.panel) showPanel(event.display.panel, event.display.reason, event.display.payload);
-        else hideAllPanels();
+      if (!event.display) break;
+      // Continuous vision watch — "watch my screen" / "watch the browser"
+      // (voice or text) tells the HUD to open the watch SSE stream.
+      if (event.display.watch) {
+        toggleScreenWatch(event.display.watch, false);
+        break;
       }
+      if (event.display.watch_stop) {
+        if (liveWatching) {
+          stopLive();
+          addLine("👁 Watch stopped.", "meta");
+        }
+        break;
+      }
+      if (event.display.panel) showPanel(event.display.panel, event.display.reason, event.display.payload);
+      else hideAllPanels();
+      break;
+    case "vision_start":
+      setVoiceStatus(liveCfg ? liveCfg.label : "WATCHING…", true);
+      break;
+    case "vision_change":
+      finishReplyLine();
+      addLine(event.description, "agent");
+      addLine("[vision change]", "meta");
+      break;
+    case "vision_heartbeat":
+      // keep-alive frame — nothing to render; the active 🔴 button is the indicator
+      break;
+    case "vision_error":
+      // The stream ends right after this event; the finally in startLiveStream
+      // cleans up and reconnects (retry:true) or stops (retry:false).  Don't
+      // stopLive() here — that would look like a user-initiated stop.
+      addLine("⚠ " + event.message, "error");
+      break;
+    case "vision_stop":
+      addLine("[watch ended — " + event.reason + "]", "meta");
       break;
     case "done":
       if (event.result && event.result.pending_consent) showConsent(event.result.pending_consent);
@@ -531,11 +863,11 @@ function onSegmentEnded() {
     activeBaseTurnId = null;
     lastSegmentWasFinal = false;
     orb.classList.remove("thinking");
-    setVoiceStatus("LISTENING…", true);
-    // Automatically restart listening after Emma finishes speaking
-    if (!isRecording) {
-      startRecording();
-    }
+    // A live watch keeps its own status label after Emma speaks a change.
+    if (liveWatching && liveCfg) setVoiceStatus(liveCfg.label, true);
+    else setVoiceStatus("LISTENING…", true);
+    // Automatically go back to listening after Emma finishes speaking
+    ensureListening();
   }
   // else: queue empty but more segments expected — idle until next event.
 }
@@ -556,6 +888,17 @@ function stopAudio() {
 }
 
 // ---------------------------------------------------------------- voice
+function ensureListening() {
+  // Always-on mic: restart listening whenever the user hasn't muted and
+  // nothing else is on the audio path (text-input mode, Emma currently
+  // speaking, or a turn in flight).  This is what keeps the mic on after
+  // every transcription / silence / reply cycle.
+  if (!micEnabled || isTextInputVisible) return;
+  if (!isRecording && !currentlyPlaying && !streaming) {
+    startRecording();
+  }
+}
+
 async function startRecording() {
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
     addLine("⚠ microphone not supported in this browser", "error");
@@ -565,10 +908,18 @@ async function startRecording() {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     recordedChunks = [];
     mediaRecorder = new MediaRecorder(stream);
+    recordedSpeech = false;
     mediaRecorder.ondataavailable = (e) => { if (e.data.size) recordedChunks.push(e.data); };
     mediaRecorder.onstop = async () => {
       stream.getTracks().forEach((t) => t.stop());
       const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || "audio/webm" });
+      if (!recordedSpeech || blob.size === 0) {
+        // Pure silence (or an empty capture) — nothing to transcribe.  Skip
+        // the API call so the always-on loop doesn't burn STT quota or 500
+        // on empty audio; just go straight back to listening.
+        ensureListening();
+        return;
+      }
       await transcribeAndSend(blob);
     };
     mediaRecorder.start();
@@ -608,7 +959,13 @@ function stopRecording() {
 }
 
 function setupSilenceDetection(stream) {
+  // Always-on listening restarts the detection loop every few seconds — close
+  // the previous AudioContext so we don't leak one per cycle.
+  if (silenceAudioContext) {
+    try { silenceAudioContext.close(); } catch (_) { /* already closed */ }
+  }
   const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+  silenceAudioContext = audioContext;
   const analyser = audioContext.createAnalyser();
   const microphone = audioContext.createMediaStreamSource(stream);
   const scriptProcessor = audioContext.createScriptProcessor(2048, 1, 1);
@@ -622,7 +979,13 @@ function setupSilenceDetection(stream) {
 
   let silenceStartTime = null;
   const SILENCE_THRESHOLD = 0.02; // Adjust based on environment
-  const SILENCE_DURATION = 1500; // ms of silence before stopping
+  // Level that counts as actual speech (vs. ambient noise) — used to decide
+  // whether a recording is worth sending to STT at all.
+  const SPEECH_THRESHOLD = 0.04;
+  // How long the room must stay quiet before Emma stops listening.  Long
+  // enough that natural mid-thought pauses don't cut you off — she stops
+  // when she's confident you're done talking.  (Tune here: 5000 = 5s.)
+  const SILENCE_DURATION = 5000; // ms of silence before stopping
 
   scriptProcessor.onaudioprocess = () => {
     if (!isRecording) return;
@@ -648,6 +1011,9 @@ function setupSilenceDetection(stream) {
     } else {
       // Sound detected, reset silence timer
       silenceStartTime = null;
+      if (normalized >= SPEECH_THRESHOLD) {
+        recordedSpeech = true;
+      }
     }
   };
 }
@@ -675,17 +1041,15 @@ function toggleTextInput() {
   } else {
     container.classList.add("hidden");
     toggleBtn.classList.remove("active");
-    // Resume recording when text input is hidden
-    if (!isRecording) {
-      startRecording();
-    }
+    // Resume listening when text input is hidden
+    ensureListening();
   }
 }
 
 function sendTextMessage() {
   const input = $("text-input");
   const text = input.value.trim();
-  if (text) {
+  if (text || attachedImage) {
     sendMessage(text);
     input.value = "";
     // After sending, keep text input open for follow-up
@@ -696,7 +1060,6 @@ function sendTextMessage() {
 async function transcribeAndSend(blob) {
   const form = new FormData();
   form.append("file", blob, "voice.webm");
-  addLine("Transcribing…", "meta");
   try {
     const res = await fetch("/api/voice/transcribe", { method: "POST", body: form });
     if (!res.ok) {
@@ -705,10 +1068,21 @@ async function transcribeAndSend(blob) {
       throw new Error(detail);
     }
     const body = await res.json();
-    if (body.text && body.text.trim()) sendMessage(body.text);
-    else addLine("⚠ nothing heard", "error");
+    if (body.text && body.text.trim()) {
+      sendMessage(body.text); // Emma answers — onSegmentEnded restarts the mic
+    } else {
+      // Nothing said: stay always-on.  Log this at most every 30s so a quiet
+      // room doesn't flood the terminal with "nothing heard" lines.
+      const now = Date.now();
+      if (now - lastNothingHeard > 30000) {
+        lastNothingHeard = now;
+        addLine("⚠ nothing heard — still listening", "error");
+      }
+      ensureListening();
+    }
   } catch (err) {
     addLine("⚠ transcription failed: " + err.message, "error");
+    ensureListening();
   }
 }
 
@@ -748,18 +1122,35 @@ async function toggleNetworkGate() {
 $("consent-approve").addEventListener("click", () => resolveConsent(true));
 $("consent-deny").addEventListener("click", () => resolveConsent(false));
 $("mic-btn").addEventListener("click", () => {
-  if (isRecording) {
-    stopRecording();
-  } else {
+  micEnabled = !micEnabled;
+  if (micEnabled) {
     startRecording();
+  } else {
+    stopRecording();
   }
 });
 $("text-toggle-btn").addEventListener("click", toggleTextInput);
 $("send-text-btn").addEventListener("click", sendTextMessage);
+$("attach-img-btn").addEventListener("click", () => $("image-input").click());
+$("live-btn").addEventListener("click", toggleLive);
+$("watch-screen-btn").addEventListener("click", () => toggleScreenWatch("screen"));
+$("watch-browser-btn").addEventListener("click", () => toggleScreenWatch("browser"));
+$("image-input").addEventListener("change", (e) => {
+  const file = e.target.files && e.target.files[0];
+  if (file) setAttachedImage(file);
+});
+$("image-chip-remove").addEventListener("click", clearAttachedImage);
 $("text-input").addEventListener("keypress", (e) => {
   if (e.key === "Enter") {
     sendTextMessage();
   }
+});
+$("text-input").addEventListener("input", () => {
+  // Show the 🔴 watch button for a pasted image URL (webcam/monitoring feed)
+  // even when no file is attached.
+  const isUrl = /^https?:\/\/\S+$/i.test($("text-input").value.trim());
+  $("live-btn").classList.toggle("hidden", !(attachedImage || isUrl));
+  if (!isUrl && !attachedImage) $("live-btn").classList.remove("active");
 });
 $("emma-content-close").addEventListener("click", hideEmmaContent);
 
@@ -787,9 +1178,5 @@ setInterval(pollDisplay, 2000);
 
 addLine("Emma online — automatic listening enabled. Click 🎙 to toggle, or say \"help\".", "meta");
 
-// Start automatic listening on load
-setTimeout(() => {
-  if (!isRecording) {
-    startRecording();
-  }
-}, 1000);
+// Start automatic listening on load — the mic stays on from here on.
+setTimeout(ensureListening, 1000);

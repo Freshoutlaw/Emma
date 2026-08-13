@@ -22,7 +22,8 @@ class _Cap:
     def __init__(self) -> None:
         for name in (
             "read_file", "write_file", "list_dir", "run_command",
-            "search", "fetch_page_text", "status", "log", "commit", "push",
+            "search", "search_ollama_registry", "fetch_page_text",
+            "status", "log", "commit", "push",
             "ps", "images", "logs", "compose_up", "compose_down", "publish",
             "open", "screenshot", "notify",
         ):
@@ -176,7 +177,7 @@ def test_reasoning_run_skips_disallowed_step(tmp_path):
                 ]
             async def fake_augment(request, k=4):
                 return ""
-            async def fake_synth(request, context, outputs):
+            async def fake_synth(request, context, outputs, images=None):
                 return "\n".join(outputs)
 
             pipeline.reasoning.plan = fake_plan
@@ -205,7 +206,7 @@ def test_stream_emits_no_action_for_disallowed_step(tmp_path):
             return [{"tool": "git_push", "args": {}}]
         async def fake_augment(request, k=4):
             return ""
-        async def fake_stream_narration(request, context, outputs):
+        async def fake_stream_narration(request, context, outputs, images=None):
             yield "done"
 
         pipeline.router.classify = fake_classify

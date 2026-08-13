@@ -40,6 +40,16 @@ async def system_status(request: Request):
         supabase_reachable = await pipeline.supabase.health()
     except Exception:
         supabase_reachable = False
+    # health() only proves the REST API answers — the HUD's SYNCED indicator
+    # must mean Emma can actually write to and query the episodes table.
+    supabase_schema: Optional[bool] = None
+    if supabase_reachable:
+        try:
+            supabase_schema = await pipeline.supabase.schema_ok(
+                embedding_dim=pipeline.settings.embedding_dim
+            )
+        except Exception:
+            supabase_schema = None
     
     # Get model - it's synchronous now
     llm_model = pipeline.llm.model()
@@ -58,7 +68,12 @@ async def system_status(request: Request):
             "ollama": pipeline.llm.is_local_available(),
             "groq": pipeline.llm.cloud.is_available(),
             "mqtt": pipeline.mqtt.status(),
-            "supabase": {"configured": pipeline.supabase.is_configured(), "reachable": supabase_reachable},
+            "supabase": {
+                "configured": pipeline.supabase.is_configured(),
+                "reachable": supabase_reachable,
+                "schema": "ok" if supabase_schema is True
+                          else ("missing" if supabase_schema is False else "unknown"),
+            },
         },
         "security": {
             "kill_switch": pipeline.kill_switch.is_engaged(),

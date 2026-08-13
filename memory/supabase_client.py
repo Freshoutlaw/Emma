@@ -43,6 +43,10 @@ class SupabaseClient:
         # Health check cache
         self._health_cache: Optional[tuple[float, bool]] = None
         self._health_cache_ttl = 30.0  # 30 seconds
+        # Schema probe cache (the HUD status endpoint polls every few seconds;
+        # a positive result only needs confirming every 60s)
+        self._schema_cache: Optional[tuple[float, bool]] = None
+        self._schema_cache_ttl = 60.0  # 60 seconds
 
     # ------------------------------------------------------------------ config
     def is_configured(self) -> bool:
@@ -113,6 +117,51 @@ class SupabaseClient:
             else:
                 self._record_failure()
             return is_healthy
+        except Exception:
+            self._record_failure()
+            return False
+
+    async def schema_ok(
+        self,
+        table: str = "episodes",
+        rpc: str = "match_episodes",
+        embedding_dim: int = 384,
+    ) -> Optional[bool]:
+        """Verify the pgvector memory schema is actually usable end to end.
+
+        Probes that PostgREST exposes the `episodes` table AND that the
+        `match_episodes` RPC exists — the two things Emma needs to insert and
+        recall memories.  Unlike health(), a missing table/RPC is a reported
+        state (False), not a failure, so it never trips the circuit breaker.
+        Returns None when Supabase is not configured.
+        """
+        if not self.is_configured():
+            return None
+        if not self._check_circuit_breaker():
+            return False
+        if self._schema_cache:
+            timestamp, ok = self._schema_cache
+            if time.monotonic() - timestamp < self._schema_cache_ttl:
+                return ok
+        try:
+            table_resp = await self._client().get(
+                f"/rest/v1/{table}", params={"select": "id", "limit": "1"}
+            )
+            if table_resp.status_code >= 400:
+                if table_resp.status_code != 404:
+                    self._record_failure()
+                return False
+            rpc_resp = await self._client().post(
+                f"/rest/v1/rpc/{rpc}",
+                json={"query_embedding": [0.0] * embedding_dim, "match_count": 1},
+            )
+            if rpc_resp.status_code >= 400:
+                if rpc_resp.status_code != 404:
+                    self._record_failure()
+                return False
+            self._record_success()
+            self._schema_cache = (time.monotonic(), True)
+            return True
         except Exception:
             self._record_failure()
             return False

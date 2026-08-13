@@ -8,10 +8,13 @@ OPTIMIZATIONS:
 - Connection pooling for HTTP clients
 - Better timeout handling
 - Streaming efficiency improvements
+- Multimodal: messages may carry `images` (raw bytes or base64 strings) which
+  are base64-encoded into the payload for vision-capable models (gemma4, …)
 """
 
 from __future__ import annotations
 
+import base64
 from typing import Any, AsyncIterator, Optional
 
 import httpx
@@ -89,6 +92,26 @@ class LocalLLM:
         return bool(self.available_models())
 
     # ---------------------------------------------------------------- chat
+    @staticmethod
+    def _encode_images(messages: list[dict]) -> list[dict]:
+        """Ollama expects vision input as base64 strings on the message dict.
+
+        A message may carry `images` (list of PNG bytes from a screenshot, or
+        already-encoded base64 strings).  bytes are encoded here so the JSON
+        payload is serializable; existing strings pass through untouched.
+        """
+        normalized: list[dict] = []
+        for msg in messages:
+            m = dict(msg)
+            images = m.get("images")
+            if images:
+                m["images"] = [
+                    base64.b64encode(img).decode("ascii") if isinstance(img, bytes) else img
+                    for img in images
+                ]
+            normalized.append(m)
+        return normalized
+
     def _payload(self, messages: list[dict], temperature: float, max_tokens: int, stream: bool) -> dict[str, Any]:
         options = {
             "temperature": temperature,
@@ -102,7 +125,7 @@ class LocalLLM:
             options["num_gpu"] = self.num_gpu
         payload = {
             "model": self.model,
-            "messages": messages,
+            "messages": self._encode_images(messages),
             "stream": stream,
             # Reasoning models (qwen3, deepseek-r1) think by default, which
             # slows responses and can exhaust max_tokens before any answer is

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Emma — Nexus Core</title>
-<link rel="stylesheet" href="static/style.css?v=2026-08-12b">
+<link rel="stylesheet" href="static/style.css?v=2026-08-12f">
 </head>
 <body>
 
@@ -50,6 +50,15 @@
     <button id="text-toggle-btn" class="hud-btn text-toggle-btn" title="Toggle text input">⌨</button>
   </div>
   <div class="text-input-container hidden" id="text-input-container">
+    <button id="attach-img-btn" class="hud-btn attach-btn" title="Attach an image for Emma to describe">📷</button>
+    <input type="file" id="image-input" accept="image/png,image/jpeg" hidden />
+    <button id="live-btn" class="hud-btn live-btn hidden" title="Watch this image live — Emma re-analyzes it every few seconds and reports when the scene changes">🔴</button>
+    <button id="watch-screen-btn" class="hud-btn watch-btn" title="Watch my screen — Emma takes screenshots and speaks up when something changes">🖥</button>
+    <button id="watch-browser-btn" class="hud-btn watch-btn" title="Watch the browser — Emma screenshots the browser page and speaks up when it changes">🌐</button>
+    <div id="image-chip" class="image-chip hidden">
+      <span id="image-chip-label">🖼 image</span>
+      <button id="image-chip-remove" class="chip-remove" title="Remove image">✕</button>
+    </div>
     <input type="text" id="text-input" class="text-input" placeholder="Type your message here..." />
     <button id="send-text-btn" class="hud-btn send-btn">Send</button>
   </div>
@@ -64,6 +73,11 @@
   </div>
 </div>
 
-<script src="static/app.js?v=2026-08-12b"></script>
+<!-- Drag-and-drop attach overlay -->
+<div id="drop-overlay" class="drop-overlay hidden">
+  <div class="drop-overlay-box">📷 Drop your image to attach it for Emma to describe</div>
+</div>
+
+<script src="static/app.js?v=2026-08-12p"></script>
 </body>
 </html>

@@ -123,8 +123,18 @@ class LLMRouter:
         return None
 
     # ---------------------------------------------------------------- chat
-    async def complete(self, messages: list, temperature: float = 0.7, max_tokens: int = 4096) -> str:
+    async def complete(
+        self,
+        messages: list,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        model: Optional[str] = None,
+    ) -> str:
         """Complete a chat (OpenAI-style message list) with the best provider.
+
+        `model` binds the call to ONE specific Ollama model (sub-agent LLMs):
+        that model serves directly, and on failure the call falls back to the
+        normal routing (cloud gemma4 primary, local, Groq).
 
         Ollama path (localhost): the Ollama Cloud model is tried FIRST; when
         it fails (subscription expired, free-tier quota/rate limit, timeout)
@@ -132,6 +142,15 @@ class LLMRouter:
         to Groq; LLMUnavailable is only raised when every provider fails.
         Routing counters feed /api/performance so cloud-vs-local is observable.
         """
+        if model:
+            # Per-agent model binding — the sub-agent's own Ollama model.
+            try:
+                result = await self.local.complete(messages, temperature, max_tokens, model=model)
+                self.last_served = {"provider": "agent", "model": model}
+                turn_metrics.record_llm_call("local", ok=True)
+                return result
+            except Exception:
+                turn_metrics.record_llm_call("local", ok=False)
         route = self.route()
         if route == "local":
             # Cloud-first via the Ollama proxy — skipped while the circuit is
@@ -170,14 +189,37 @@ class LLMRouter:
             "No LLM provider available — Ollama cloud/local models unavailable "
             "(check ollama.com quota) or set GROQ_API_KEY."
         )
-    async def stream(self, messages: list, temperature: float = 0.7, max_tokens: int = 4096) -> AsyncIterator[str]:
+    async def stream(
+        self,
+        messages: list,
+        temperature: float = 0.7,
+        max_tokens: int = 4096,
+        model: Optional[str] = None,
+    ) -> AsyncIterator[str]:
         """Stream a chat completion token-by-token from the best provider.
+
+        `model` binds the stream to ONE specific Ollama model (sub-agent
+        LLMs).  Mid-stream failures NEVER fall back (the duplicate tokens
+        rule below applies to the bound model too).
 
         Ollama path (localhost): the Ollama Cloud model is tried first and the
         local model is the fallback when the cloud quota is exhausted.  A
         mid-stream failure NEVER falls back (the duplicate tokens rule below);
         quota errors surface before the first token, so the fallback works.
         """
+        if model:
+            emitted = False
+            try:
+                async for token in self.local.stream(messages, temperature, max_tokens, model=model):
+                    emitted = True
+                    yield token
+                self.last_served = {"provider": "agent", "model": model}
+                turn_metrics.record_llm_call("local", ok=True)
+                return
+            except Exception:
+                turn_metrics.record_llm_call("local", ok=False)
+                if emitted:
+                    raise  # duplicate tokens rule — never restart mid-stream
         route = self.route()
         if route == "local":
             if self.ollama_cloud is not None:

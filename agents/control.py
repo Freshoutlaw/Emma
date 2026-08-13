@@ -20,6 +20,20 @@ class UnknownToolError(RuntimeError):
     pass
 
 
+def summarize_tool_output(tool: str, result: Any) -> str:
+    """Turn a tool result into terminal-friendly text.
+
+    Screenshot tools return raw PNG bytes — never stringify those (the repr
+    would be byte garbage).  The bytes travel separately to the vision model;
+    this placeholder is what shows up in the action log / terminal.
+    """
+    if isinstance(result, bytes):
+        return f"[{tool}: screenshot captured — {len(result)} bytes, shown to Emma's vision model]"
+    if isinstance(result, str):
+        return result
+    return json.dumps(result, default=str)
+
+
 class ToolNotAllowedError(RuntimeError):
     """A tool exists in the catalog but the calling agent's allowlist forbids it.
 
@@ -46,6 +60,7 @@ class ControlAgent(BaseAgent):
         "list_dir": {"description": "List a directory's contents.", "args": {"path": "str"}},
         "run_command": {"description": "Run a shell command and return its output.", "args": {"command": "str", "cwd": "str (optional)"}},
         "web_search": {"description": "Search the web and return result snippets.", "args": {"query": "str", "n": "int (default 5)"}},
+        "ollama_registry_search": {"description": "Search Ollama's model registry (ollama.com) for models suited to a task — e.g. coding agents, vision models. Returns model names + descriptions.", "args": {"query": "str", "n": "int (default 10)"}},
         "fetch_page": {"description": "Fetch a URL and extract readable text.", "args": {"url": "str"}},
         "git_status": {"description": "Show git working tree status.", "args": {"cwd": "str (optional)"}},
         "git_log": {"description": "Show recent git commits.", "args": {"n": "int (default 10)", "cwd": "str (optional)"}},
@@ -58,9 +73,9 @@ class ControlAgent(BaseAgent):
         "compose_down": {"description": "Tear down a docker compose stack in a directory.", "args": {"directory": "str"}},
         "mqtt_publish": {"description": "Publish a message to the MQTT broker.", "args": {"topic": "str", "payload": "str"}},
         "browser_open": {"description": "Open a URL in a headless browser.", "args": {"url": "str"}},
-        "browser_screenshot": {"description": "Screenshot the headless browser page.", "args": {"path": "str (optional)"}},
+        "browser_screenshot": {"description": "Screenshot the headless browser page. The image is passed to Emma's vision model, which can describe and answer questions about what is on the page.", "args": {"path": "str (optional)"}},
         "desktop_notify": {"description": "Show a desktop notification.", "args": {"title": "str", "message": "str"}},
-        "desktop_screenshot": {"description": "Capture a screenshot of the desktop.", "args": {"path": "str (optional)"}},
+        "desktop_screenshot": {"description": "Capture a screenshot of the desktop. The image is passed to Emma's vision model, which can describe and answer questions about what is on the screen.", "args": {"path": "str (optional)"}},
     }
 
     def __init__(self, pipeline: "Pipeline") -> None:
@@ -80,6 +95,7 @@ class ControlAgent(BaseAgent):
             "list_dir": self.io.list_dir,
             "run_command": self.io.run_command,
             "web_search": self.web.search,
+            "ollama_registry_search": self.web.search_ollama_registry,
             "fetch_page": self.web.fetch_page_text,
             "git_status": self.git.status,
             "git_log": self.git.log,
@@ -118,8 +134,14 @@ class ControlAgent(BaseAgent):
         return catalog & frozenset(allow)
 
     # ---------------------------------------------------------------- execute
-    async def execute(self, tool: str, actor: str = "control", **args: Any) -> str:
-        """Run `tool` for `actor`, enforcing that actor's tool allowlist."""
+    async def execute(self, tool: str, actor: str = "control", **args: Any) -> Any:
+        """Run `tool` for `actor`, enforcing that actor's tool allowlist.
+
+        Returns a string for text results (or JSON for structured ones), but
+        screenshot tools return the raw PNG bytes so the vision model can
+        receive the actual image.  Callers that need text use
+        `summarize_tool_output(tool, result)`.
+        """
         fn = self._tools().get(tool)
         if fn is None:
             raise UnknownToolError(f"unknown tool '{tool}'")
@@ -130,6 +152,8 @@ class ControlAgent(BaseAgent):
         self.pipeline.audit.log(
             "control.executed", action=tool, actor=f"agent:{actor}", detail=args
         )
+        if isinstance(result, bytes):
+            return result
         if isinstance(result, str):
             return result
         return json.dumps(result, default=str)
@@ -160,4 +184,9 @@ class ControlAgent(BaseAgent):
             output = await self.execute(tool, **args)
         except Exception as exc:  # surface tool errors to the router
             return AgentResult(ok=False, output=str(exc), intent="control", error=str(exc))
-        return AgentResult(ok=True, output=output, intent="control", actions=[{"tool": tool, "args": args}])
+        return AgentResult(
+            ok=True,
+            output=summarize_tool_output(tool, output) if isinstance(output, bytes) else output,
+            intent="control",
+            actions=[{"tool": tool, "args": args}],
+        )
