@@ -572,3 +572,20 @@ body::after { bottom: 10px; right: 10px; border-bottom: 2px solid rgba(0, 242, 2
 .consent-banner .consent-text { font-family: 'JetBrains Mono', monospace; font-size: 0.76rem; color: var(--amber); line-height: 1.5; }
 .consent-banner .btn-row { margin-top: 0; }
 .hidden { display: none !important; }
+
+/* ---------- Board of Advisors panel ---------- */
+.board-q { font-size: 0.95rem; color: var(--cream, #e8e6e3); margin-bottom: 10px; padding-bottom: 8px; border-bottom: 1px solid rgba(255,255,255,0.12); }
+.board-verdict { font-size: 0.85rem; line-height: 1.5; padding: 10px 12px; border-radius: 8px; background: rgba(110, 231, 183, 0.08); border: 1px solid rgba(110, 231, 183, 0.25); margin-bottom: 10px; }
+.board-verdict.board-split { background: rgba(255, 176, 32, 0.07); border-color: rgba(255, 176, 32, 0.3); }
+.board-tag { display: inline-block; font-size: 0.62rem; letter-spacing: 0.08em; padding: 2px 7px; border-radius: 4px; background: rgba(255,255,255,0.1); margin-left: 6px; vertical-align: middle; }
+.board-synthesis { font-size: 0.78rem; line-height: 1.6; color: var(--cream, #e8e6e3); margin-bottom: 12px; }
+.board-seat { border: 1px solid rgba(255,255,255,0.12); border-radius: 8px; padding: 10px 12px; margin-bottom: 10px; }
+.board-seat-head { font-size: 0.8rem; font-weight: 700; color: var(--amber, #ffb020); margin-bottom: 6px; }
+.board-conf { float: right; font-size: 0.68rem; color: rgba(255,255,255,0.55); }
+.board-position { font-size: 0.82rem; color: var(--cream, #e8e6e3); margin-bottom: 4px; }
+.board-reasoning { font-size: 0.74rem; line-height: 1.5; color: rgba(255,255,255,0.7); margin-bottom: 6px; }
+.board-cites { font-size: 0.68rem; color: var(--emerald, #6ee3b7); }
+.board-cite { margin-right: 8px; }
+.board-meta { font-size: 0.68rem; color: rgba(255,255,255,0.5); margin-top: 4px; }
+.board-flag { color: var(--crimson, #ff4d5a); }
+.board-err { color: var(--crimson, #ff4d5a); }

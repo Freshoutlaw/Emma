@@ -78,6 +78,10 @@ class Settings(BaseSettings):
     # --- read-only query DSN (asyncpg, IPv4 shared-pooler)
     supabase_query_dsn: Optional[str] = None
 
+    # --- board of advisors
+    board_cost_ceiling_usd: float = 0.50   # per meeting; zero means no meeting at all
+    board_max_seats: int = 4
+
     # --- MQTT
     mqtt_host: str = "localhost"
     mqtt_port: int = 1883

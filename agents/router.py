@@ -45,6 +45,7 @@ from agents.supabase_query import SupabaseQueryAgent
 from agents.design import DesignAgent
 from agents.research import ResearchAgent
 from agents.agent_factory import AgentFactory
+from agents.board import BoardAgent
 from agents.learning import LearningAgent
 from capabilities.browser_automation import BrowserAutomation
 from capabilities.desktop_control import DesktopControl
@@ -71,11 +72,11 @@ from security.consent_manager import ConsentManager
 from security.guardian import ConsentRequiredError, Guardian
 from security.kill_switch import KillSwitch
 
-INTENTS = ("control", "memory", "security", "self_improve", "map", "reasoning", "supabase_query", "design", "research", "agent_factory", "learning", "chat")
+INTENTS = ("control", "memory", "security", "self_improve", "map", "reasoning", "supabase_query", "design", "research", "agent_factory", "learning", "board", "chat")
 
 INTENT_SYSTEM_PROMPT = (
     "You are Emma's intent router. Classify the user's request into exactly one intent: "
-    "control, memory, security, self_improve, reasoning, supabase_query, learning, chat.\n"
+    "control, memory, security, self_improve, reasoning, supabase_query, learning, board, chat.\n"
     "- control: the user wants an action performed on the system (files, shell, web, git, docker, mqtt, browser, desktop)\n"
     "- memory: storing or recalling memories\n"
     "- security: kill switch, consent mode, network gate, or status reports\n"
@@ -86,6 +87,7 @@ INTENT_SYSTEM_PROMPT = (
     "- research: web research, information gathering, summarizing findings\n"
     "- agent_factory: creating, building, or spawning new sub-agents\n"
     "- learning: comprehensive learning tasks where Emma should learn about a topic from its origins to present day\n"
+    "- board: asking the board of advisors for a decision ('ask the board about X', 'convene the board', naming an advisor like Hormozi or Thompson)\n"
     "- reasoning: complex multi-step tasks or questions that may need tools\n"
     "- chat: conversation that needs no tools\n"
     'Return ONLY JSON: {"intent": "<one intent>", "tool": "<tool name or null>", "args": {}}'
@@ -102,6 +104,7 @@ _DESIGN_KEYWORDS = frozenset(["design", "mockup", "scaffold", "tokens", "catalog
 _RESEARCH_KEYWORDS = frozenset(["research", "search for", "find information", "look up", "summarize", "what are the best"])
 _AGENT_FACTORY_KEYWORDS = frozenset(["create agent", "build agent", "make agent", "spawn agent", "new agent", "agent factory"])
 _LEARNING_KEYWORDS = frozenset(["learn", "teach me", "study", "go online and learn", "everything about", "comprehensive learning"])
+_BOARD_KEYWORDS = frozenset(["ask the board", "board of advisors", "convene the board", "board about", "board on ", "what would the board", "advisors think", "advisors say"])
 
 
 # ----------------------------------------------------------------- vision live
@@ -243,6 +246,10 @@ def keyword_intent(message: str) -> str:
         return "agent_factory"
     if any(keyword in low for keyword in _LEARNING_KEYWORDS):
         return "learning"
+    if any(keyword in low for keyword in _BOARD_KEYWORDS) or any(
+        surname in low for surname in ("hormozi", "mckenzie", "fried", "thompson")
+    ):
+        return "board"
     if (
         any(keyword in low for keyword in _SELF_IMPROVE_KEYWORDS)
         or low.startswith(("apply ", "verify ", "inspect "))
@@ -330,6 +337,7 @@ class Pipeline:
         self.research_agent = ResearchAgent(self)
         self.agent_factory = AgentFactory(self)
         self.learning_agent = LearningAgent(self)
+        self.board_agent = BoardAgent(self)
         self.reasoning = ReasoningAgent(self)
 
         # --- orchestration layer ---
@@ -340,7 +348,7 @@ class Pipeline:
             self.control, self.memory_agent, self.security_agent,
             self.self_improve, self.map_agent, self.supabase_query_agent,
             self.design_agent, self.research_agent, self.agent_factory,
-            self.reasoning,
+            self.learning_agent, self.board_agent, self.reasoning,
         ):
             self.agent_registry.register_builtin(agent.name, agent.description)
         # Load config-driven agent manifests and start the watcher.
@@ -565,6 +573,9 @@ class AgentRouter:
         # Agents other than control can also hit the guardian (e.g. a HIGH
         # `self_modify`). Turn ConsentRequiredError into a pending-consent
         # result so the HTTP layer returns 409 with a token instead of 500.
+        # The board agent is wired via getattr so stub pipelines in tests
+        # (SimpleNamespace without board_agent) keep dispatching everything else.
+        _board_agent = getattr(self.pipeline, "board_agent", None)
         for intent_name, runner in (
             ("memory", self.pipeline.memory_agent.run),
             ("security", self.pipeline.security_agent.run),
@@ -575,8 +586,9 @@ class AgentRouter:
             ("research", self.pipeline.research_agent.run),
             ("agent_factory", self.pipeline.agent_factory.run),
             ("learning", self.pipeline.learning_agent.run),
+            ("board", _board_agent.run if _board_agent is not None else None),
         ):
-            if intent == intent_name:
+            if intent == intent_name and runner is not None:
                 try:
                     return await runner(message)
                 except ConsentRequiredError as exc:

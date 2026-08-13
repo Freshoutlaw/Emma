@@ -27,6 +27,7 @@ from backend.config import Settings
 from backend.middleware.auth import AuthMiddleware
 from backend.middleware.logging import RequestLoggingMiddleware
 from backend.routers import chat, security, system, tts, voice, performance
+from board.scheduler import BoardScheduler
 
 
 def get_domain() -> str:
@@ -56,7 +57,16 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         pipeline.audit.log("app.started", actor="system", detail={"version": settings.version, "domain": domain})
+        # Tier 7: the standing monthly review — the board shows up when you
+        # didn't call the meeting. Runs on the always-on backend surface.
+        board_scheduler = BoardScheduler(
+            convene=pipeline.board_agent.convene,
+            store=pipeline.board_agent.store,
+        )
+        app.state.board_scheduler = board_scheduler
+        await board_scheduler.start()
         yield
+        await board_scheduler.stop()
         # Proper resource cleanup - handled by pipeline.close()
         await pipeline.close()
         pipeline.audit.log("app.stopped", actor="system")

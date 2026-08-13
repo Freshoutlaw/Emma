@@ -15,7 +15,7 @@ import threading
 import time
 from typing import Any, Optional
 
-PANELS = ("memory", "status", "guardian", "map")
+PANELS = ("memory", "status", "guardian", "map", "board")
 
 
 class DisplayState:

@@ -161,6 +161,10 @@ function showPanel(name, reason, payload) {
       title = "REGION INTELLIGENCE";
       content = `<iframe id="map-frame" src="${mapFrameSrc(payload)}" style="width:100%;height:400px;border:none;"></iframe>`;
       break;
+    case "board":
+      title = "BOARD OF ADVISORS";
+      content = renderBoardPanel(payload);
+      break;
     default:
       return;
   }
@@ -190,6 +194,63 @@ function supabaseStatusLabel(s) {
   if (s.schema === "ok") return "[ SYNCED ]";
   if (s.schema === "missing") return "[ SCHEMA MISSING ]";
   return "[ UNKNOWN ]";
+}
+
+// ---------------------------------------------------------------- board panel
+// The board of advisors renders from the display payload pushed with the
+// meeting result — question, opinions with their citation snapshots, the
+// chair's synthesis, and the measured cost. Stored citations render from
+// their meeting-time snapshot, not the current dossier.
+function escapeAttr(s) {
+  return escapeHtml(String(s ?? "")).replace(/"/g, "&quot;");
+}
+
+function renderBoardPanel(payload) {
+  if (!payload) return "<p>No meeting payload.</p>";
+  const parts = [];
+  parts.push(`<div class="board-q">${escapeHtml(payload.question)}</div>`);
+  const verdict = payload.verdict || {};
+  if (verdict.spoken_summary) {
+    parts.push(`<div class="board-verdict ${verdict.unanimous ? "" : "board-split"}">`);
+    parts.push(`<span class="board-tag">${verdict.unanimous ? "UNANIMOUS" : "SPLIT"}</span> ${escapeHtml(verdict.spoken_summary)}</div>`);
+  }
+  if ((verdict.discount_notes || []).length) {
+    parts.push(`<div class="board-meta">Discounts: ${escapeHtml(verdict.discount_notes.join(" · "))}</div>`);
+  }
+  if ((verdict.flags || []).length) {
+    parts.push(`<div class="board-meta board-flag">Flags: ${escapeHtml(verdict.flags.join(" · "))}</div>`);
+  }
+  if (verdict.synthesis) {
+    parts.push(`<div class="board-synthesis">${escapeHtml(verdict.synthesis).replace(/\n/g, "<br>")}</div>`);
+  }
+  for (const o of payload.opinions || []) {
+    parts.push(`<div class="board-seat">`);
+    parts.push(`<div class="board-seat-head">${escapeHtml(o.seat_name)}`);
+    if (o.abstain) parts.push(`<span class="board-tag">ABSTAINED</span>`);
+    if (o.unsourced) parts.push(`<span class="board-tag">NO CITATIONS</span>`);
+    if (o.error) parts.push(`<span class="board-tag board-err">ERROR</span>`);
+    parts.push(`<span class="board-conf">${(o.confidence * 100).toFixed(0)}%</span></div>`);
+    if (o.position) parts.push(`<div class="board-position">${escapeHtml(o.position)}</div>`);
+    if (o.reasoning) parts.push(`<div class="board-reasoning">${escapeHtml(o.reasoning)}</div>`);
+    if (o.citations && o.citations.length) {
+      const srcs = o.citation_sources || {};
+      const cites = o.citations.map((c) => {
+        const s = srcs[c] || {};
+        return `<span class="board-cite" title="${escapeAttr(s.source || "")}">${escapeHtml(c)}${s.title ? " — " + escapeHtml(s.title) : ""}</span>`;
+      }).join(" ");
+      parts.push(`<div class="board-cites">${cites}</div>`);
+    }
+    if (o.citations_rejected && o.citations_rejected.length) {
+      parts.push(`<div class="board-meta board-flag">stripped: ${escapeHtml(o.citations_rejected.join(", "))}</div>`);
+    }
+    if (o.would_change_mind) {
+      parts.push(`<div class="board-meta">Would change mind if: ${escapeHtml(o.would_change_mind)}</div>`);
+    }
+    if (o.error) parts.push(`<div class="board-meta board-err">${escapeHtml(o.error)}</div>`);
+    parts.push(`</div>`);
+  }
+  parts.push(`<div class="board-meta">Meeting ${escapeHtml(payload.meeting_id)} · cost $${Number(payload.cost_usd).toFixed(4)} · ${payload.prompted ? "you asked" : "standing review"}</div>`);
+  return parts.join("");
 }
 
 function generateStatusContent() {
