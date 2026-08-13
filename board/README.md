@@ -61,8 +61,19 @@ board/
 
 ## Your live numbers
 
-The chair reads the brief fresh at meeting time from `usage.db` (real LLM
-spend). To give the board your actual business figures, set
-`EMMA_SUPABASE_QUERY_DSN` — the chair can then run read-only SQL against
-your business database mid-meeting. Until then the brief says revenue
-figures are unavailable and the chair is instructed not to invent them.
+The chair reads the brief fresh at meeting time — never a number written
+down in a file. Three real feeds:
+
+1. `usage.db` — actual LLM spend (always available).
+2. **What you told Emma.** Business numbers you state in chat land in
+   episodic memory; at meeting time one bounded LLM call extracts them
+   with provenance (episode id + date) into `data/business.db`. The brief
+   labels them "reported to Emma — sourced, not verified financials", so
+   the chair says *which episode* a figure rests on. Try:
+   > "for the record, our MRR is $4,200"
+3. **A real business database.** Set `EMMA_SUPABASE_QUERY_DSN` and the
+   brief runs deterministic read-only probes at meeting time, showing the
+   actual rows the chair saw.
+
+When neither feed has data, the brief says exactly how to fix it — it
+never invents a figure, and the chair is told not to either.

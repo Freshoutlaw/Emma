@@ -53,7 +53,7 @@ class BoardAgent(BaseAgent):
     # ------------------------------------------------------------ convene
     async def convene(self, question: str, prompted: bool = True) -> AgentResult:
         roster = self._roster()
-        brief = build_brief(self.pipeline)
+        brief = await build_brief(self.pipeline)
         triage = await self.router.triage(question, roster)
 
         if triage.declined:

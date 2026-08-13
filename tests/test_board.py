@@ -20,14 +20,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+import types
 from pathlib import Path
 
 import pytest
 
+from board.brief import build_brief
 from board.citations import filter_citations, is_unsourced
 from board.chair import ChairRunner, can_be_unanimous, compute_verdict_counts, spoken_summary_matches
 from board.dossier import DossierError, load_roster, parse_dossier
 from board.meeting import MeetingRunner, _parse_seat_opinion
+from board.metrics import BusinessMetrics, extract_from_memory, probe_business_sql
 from board.models import ChairVerdict, DoctrineEntry, Seat, SeatOpinion
 from board.research.verify import extract_json_array, verify_dossier
 from board.router import BoardRouter, normalize_text
@@ -224,6 +227,140 @@ def test_verify_extract_json_array_garbage():
     assert extract_json_array("") is None
     assert extract_json_array("no json here") is None
     assert extract_json_array("x [1, 2] y") == [1, 2]
+
+
+# ================================================================== live brief (metrics)
+class _FakeEpisodic:
+    def __init__(self, episodes=None):
+        self.episodes = episodes or []
+
+    def recent(self, limit=20):
+        return self.episodes[:limit]
+
+    def count(self):
+        return len(self.episodes)
+
+
+class _FakeQueryAgent:
+    def __init__(self, configured=True, tables=None, rows=None):
+        self._configured = configured
+        self.tables = tables or []
+        self.rows = rows or []
+
+    def is_configured(self):
+        return self._configured
+
+    async def list_tables(self):
+        return types.SimpleNamespace(
+            ok=True,
+            output=json.dumps([{"name": t, "type": "BASE TABLE"} for t in self.tables]),
+        )
+
+    async def query(self, sql):
+        return types.SimpleNamespace(ok=True, output=json.dumps(self.rows))
+
+
+def _pipeline(tmp_path, llm=None, episodes=None, query_agent=None, dsn=None):
+    return types.SimpleNamespace(
+        settings=types.SimpleNamespace(data_dir=tmp_path, supabase_query_dsn=dsn),
+        usage_repo=_FakeRepo(),
+        episodic=_FakeEpisodic(episodes),
+        llm=types.SimpleNamespace(complete=llm or _FakeLLM(responses=["[]"]).complete),
+        supabase_query_agent=query_agent,
+    )
+
+
+def _episode(eid, content, kind="user", ts="2026-08-13T10:00:00+00:00"):
+    return {"id": eid, "ts": ts, "kind": kind, "content": content}
+
+
+def test_metrics_store_snapshot_latest(tmp_path):
+    store = BusinessMetrics(tmp_path / "business.db")
+    store.record("mrr", 4000, "usd", "episode:a", "2026-08-01T00:00:00+00:00")
+    store.record("mrr", 4200, "usd", "episode:b", "2026-08-13T00:00:00+00:00")
+    snap = store.snapshot()
+    assert len(snap) == 1
+    assert snap[0]["metric"] == "mrr"
+    assert snap[0]["value"] == 4200
+    assert snap[0]["source"] == "episode:b"
+
+
+def test_metrics_store_drops_unknown_metric(tmp_path):
+    store = BusinessMetrics(tmp_path / "business.db")
+    store.record("vibes", 9, "count", "episode:a", "2026-08-01T00:00:00+00:00")
+    assert store.has_data() is False
+
+
+def test_extract_records_with_provenance(tmp_path):
+    llm = _FakeLLM(responses=['[{"metric": "mrr", "value": 4200, "unit": "usd", "episode_id": "e1", "note": "told in chat"}]'])
+    pipeline = _pipeline(tmp_path, llm=llm.complete, episodes=[_episode("e1", "our MRR is $4,200")])
+    recorded = asyncio.run(extract_from_memory(pipeline))
+    assert recorded == 1
+    snap = BusinessMetrics(tmp_path / "business.db").snapshot()
+    assert snap[0]["metric"] == "mrr"
+    assert snap[0]["value"] == 4200
+    assert snap[0]["unit"] == "usd"
+    assert snap[0]["source"] == "episode:e1"
+
+
+def test_extract_rejects_fabricated_episode_id(tmp_path):
+    # The extraction may not invent provenance: an id not shown is dropped.
+    llm = _FakeLLM(responses=['[{"metric": "mrr", "value": 9999, "unit": "usd", "episode_id": "zzz", "note": ""}]'])
+    pipeline = _pipeline(tmp_path, llm=llm.complete, episodes=[_episode("e1", "our MRR is $4,200")])
+    recorded = asyncio.run(extract_from_memory(pipeline))
+    assert recorded == 0
+    assert BusinessMetrics(tmp_path / "business.db").has_data() is False
+
+
+def test_extract_skips_when_no_new_episodes(tmp_path):
+    episodes = [_episode("e1", "our MRR is $4,200")]
+    llm = _FakeLLM(responses=['[{"metric": "mrr", "value": 4200, "unit": "usd", "episode_id": "e1", "note": ""}]'])
+    pipeline = _pipeline(tmp_path, llm=llm.complete, episodes=episodes)
+    assert asyncio.run(extract_from_memory(pipeline)) == 1
+    calls_after_first = llm.calls
+    # Same episodes, no new ones — the second extraction must make NO call.
+    assert asyncio.run(extract_from_memory(pipeline)) == 0
+    assert llm.calls == calls_after_first
+
+
+def test_brief_shows_reported_figures(tmp_path):
+    store = BusinessMetrics(tmp_path / "business.db")
+    store.record("mrr", 4200, "usd", "episode:e1", "2026-08-13T10:00:00+00:00", "told in chat")
+    store.record("subscribers", 37, "count", "episode:e2", "2026-08-13T10:00:00+00:00")
+    brief = asyncio.run(build_brief(_pipeline(tmp_path)))
+    assert "as reported to Emma" in brief.full
+    assert "$4,200.00" in brief.full
+    assert "37" in brief.full
+    assert "Reported business figures" in brief.short
+
+
+def test_brief_unavailable_is_actionable_not_invented(tmp_path):
+    brief = asyncio.run(build_brief(_pipeline(tmp_path)))
+    assert "none available yet" in brief.full
+    assert "DO NOT invent" in brief.full
+    assert "EMMA_SUPABASE_QUERY_DSN" in brief.full
+    assert "mrr = " not in brief.full.lower()  # no invented metric line
+    assert "revenue = " not in brief.full.lower()
+
+
+def test_brief_shows_live_sql_probe_rows(tmp_path):
+    agent = _FakeQueryAgent(configured=True, tables=["revenue", "users"], rows=[{"id": 1, "amount": 4200}])
+    brief = asyncio.run(build_brief(_pipeline(tmp_path, query_agent=agent, dsn="postgres://x")))
+    assert "live SQL" in brief.full
+    assert "revenue" in brief.full
+    assert "4200" in brief.full
+
+
+def test_brief_connected_but_no_metric_tables(tmp_path):
+    agent = _FakeQueryAgent(configured=True, tables=["notes", "logs"])
+    brief = asyncio.run(build_brief(_pipeline(tmp_path, query_agent=agent, dsn="postgres://x")))
+    assert "CONNECTED" in brief.full
+    assert "no tables" in brief.full
+
+
+def test_probe_requires_configured_agent(tmp_path):
+    agent = _FakeQueryAgent(configured=False)
+    assert asyncio.run(probe_business_sql(_pipeline(tmp_path, query_agent=agent, dsn=None))) == []
 
 
 # ================================================================== Tier 3
