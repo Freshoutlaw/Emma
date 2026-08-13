@@ -1,0 +1,71 @@
+# Render.com deployment configuration for Emma AI
+# This file defines how Render builds and runs Emma
+
+services:
+  - type: web
+    name: emma-ai
+    env: python
+    plan: free  # Can upgrade to starter ($7/mo) for better performance
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    
+    # Environment variables (set these in Render dashboard)
+    envVars:
+      - key: EMMA_DOMAIN
+        value: onrender.com
+      - key: EMMA_HOST
+        value: 0.0.0.0
+      - key: EMMA_PORT
+        value: 8000
+      - key: EMMA_APP_NAME
+        value: emma-ai
+      - key: EMMA_VERSION
+        value: 0.1.0
+      - key: EMMA_CONSENT_MODE
+        value: once
+      - key: EMMA_APPROVAL_TTL
+        value: 3600
+      - key: EMMA_AUDIT_MAX_ENTRIES
+        value: 5000
+      - key: EMMA_NETWORK_GATE_OPEN
+        value: true
+      - key: EMMA_OLLAMA_URL
+        value: http://localhost:11434
+      - key: EMMA_LOCAL_MODEL
+        value: qwen3.5:2b
+      - key: EMMA_CLOUD_MODEL
+        value: llama-3.3-70b-versatile
+      - key: EMMA_EMBEDDING_MODEL
+        value: nomic-embed-text
+      - key: EMMA_EMBEDDING_DIM
+        value: 384
+      - key: EMMA_TTS_VOICE
+        value: en-US-JennyNeural
+      - key: EMMA_VOICE_VAD_THRESHOLD
+        value: 0.5
+      - key: EMMA_VOICE_SILENCE_DURATION_MS
+        value: 1500
+      - key: EMMA_VOICE_MAX_DURATION_MS
+        value: 60000
+      - key: EMMA_BOARD_COST_CEILING_USD
+        value: 0.50
+      - key: EMMA_BOARD_MAX_SEATS
+        value: 4
+      - key: EMMA_MQTT_HOST
+        value: localhost
+      - key: EMMA_MQTT_PORT
+        value: 1883
+      
+      # Optional: Add your API keys in Render dashboard (not here for security)
+      # - key: GROQ_API_KEY
+      #   sync: false
+      # - key: DEEPGRAM_API_KEY
+      #   sync: false
+      # - key: EMMA_SUPABASE_URL
+      #   sync: false
+      # - key: EMMA_SUPABASE_ANON_KEY
+      #   sync: false
+      # - key: EMMA_SUPABASE_SERVICE_KEY
+      #   sync: false
+      # - key: EMMA_SUPABASE_QUERY_DSN
+      #   sync: false
