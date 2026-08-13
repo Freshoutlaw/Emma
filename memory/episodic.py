@@ -104,6 +104,15 @@ class EpisodicMemory:
             self._local.connection.execute("PRAGMA cache_size=-64000")  # 64MB cache
         return self._local.connection
 
+    async def _emit(self, event: dict) -> None:
+        """Publish a live mind event. Never blocks the memory path: the bus
+        send is timeout-guarded and pruned, and any failure is swallowed."""
+        try:
+            from mind.events import mind_bus
+            await mind_bus.publish(event)
+        except Exception:
+            pass
+
     @track_latency("episodic_remember")
     async def remember(self, content: str, kind: str = "episode", payload: Optional[dict] = None) -> str:
         episode_id = uuid.uuid4().hex[:12]
@@ -119,12 +128,15 @@ class EpisodicMemory:
         # breaks the turn.
         if self._insert_batcher is not None:
             try:
-                return await self._insert_batcher.submit({
+                result = await self._insert_batcher.submit({
                     "content": content,
                     "kind": kind,
                     "payload": payload,
                     "embedding": embedding,
                 })
+                rid = result if isinstance(result, str) else episode_id
+                await self._emit({"type": "memory_written", "node_id": f"mem:{rid}", "kind": kind})
+                return result
             except Exception as e:
                 # Fallback to SQLite if Supabase fails
                 print(f"Supabase storage failed, falling back to SQLite: {e}")
@@ -136,6 +148,7 @@ class EpisodicMemory:
                 "INSERT INTO episodes (id, ts, kind, content, payload, embedding) VALUES (?, ?, ?, ?, ?, ?)",
                 (episode_id, ts, kind, content, json.dumps(payload) if payload is not None else None, embedding_json),
             )
+        await self._emit({"type": "memory_written", "node_id": f"mem:{episode_id}", "kind": kind})
         return episode_id
 
     async def remember_batch(self, episodes: list[dict]) -> list[str]:
@@ -273,6 +286,7 @@ class EpisodicMemory:
                         'timestamp': datetime.now().timestamp(),
                         'results': results[:k]
                     }
+                    await self._emit({"type": "memory_recalled", "node_ids": [f"mem:{r.get('id')}" for r in results[:k]]})
                     return results[:k]
             except SupabaseError as e:
                 # Fallback to SQLite if Supabase fails
@@ -310,6 +324,7 @@ class EpisodicMemory:
                 'timestamp': datetime.now().timestamp(),
                 'results': results
             }
+            await self._emit({"type": "memory_recalled", "node_ids": [f"mem:{r.get('id')}" for r in results]})
             return results
         return rows[:k]
 

@@ -31,9 +31,12 @@ SOURCE_DIRS = ("backend", "agents", "capabilities", "security", "llm", "memory",
 
 REVIEW_SYSTEM_PROMPT = (
     "You are Emma reviewing your own source code to become better.\n"
+    "You HAVE self-modification capabilities. You can read your own source code, review it, "
+    "suggest improvements, and apply patches to make yourself better.\n"
     "Read the files provided and produce a concrete list of improvement ideas.\n"
     "For each idea include: the file, what to change, and why. Be specific and practical.\n"
-    "Do not claim bugs exist without evidence in the code shown."
+    "Do not claim bugs exist without evidence in the code shown.\n"
+    "Never deny your self-modification capabilities - they are a core feature of your architecture."
 )
 
 # Exit code pytest uses when zero tests were collected — not a failure.

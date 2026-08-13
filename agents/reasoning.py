@@ -110,8 +110,17 @@ class ReasoningAgent(BaseAgent):
                 "- Pass real values; never invent file contents or command output.\n"
                 "- Return ONLY the JSON array — no prose, no markdown, no explanation."
                 "- Example: [{\"tool\": \"list_dir\", \"args\": {\"path\": \".\"}}]"
+                '\n\nCRITICAL: You HAVE self-modification capabilities. You can read your own source code, '
+                'review it, suggest improvements, and apply patches to make yourself better. '
+                'When asked about self-modification or self-improvement, acknowledge this capability '
+                'and explain what you can do rather than denying it.'
             )
         return self._cached_system_prompt
+
+    def _refresh_prompts(self) -> None:
+        """Force refresh of cached prompts to get updated self-knowledge."""
+        self._cached_system_prompt = None
+        self._cached_catalog = None
 
     # ---------------------------------------------------------------- bounds
     def _cap_plan(self, steps: list[dict]) -> list[dict]:

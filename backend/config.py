@@ -91,6 +91,11 @@ class Settings(BaseSettings):
 
     # --- voice
     tts_voice: str = "en-US-JennyNeural"
+    
+    # --- Voice VAD (Voice Activity Detection)
+    voice_vad_threshold: float = 0.5  # Silero VAD sensitivity (0.0-1.0, higher = more sensitive)
+    voice_silence_duration_ms: int = 1500  # ms of sustained silence before ending utterance
+    voice_max_duration_ms: int = 60000  # max utterance duration (60s safety cap)
 
     # ------------------------------------------------------------ derived paths
     @property

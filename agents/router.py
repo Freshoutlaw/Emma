@@ -34,6 +34,17 @@ from agents.control import (
 from agents.reasoning import SCREENSHOT_TOOLS
 from orchestration.routing_policy import apply_policy, RoutingDecision
 from orchestration.failure_isolation import failure_isolation
+
+
+async def _mind_event(event: dict) -> None:
+    """Publish a live mind event for the /mind observer sockets. Never
+    blocks dispatch: the bus send is timeout-guarded and any failure is
+    swallowed so the visualization can never slow the real turn."""
+    try:
+        from mind.events import mind_bus
+        await mind_bus.publish(event)
+    except Exception:
+        pass
 from orchestration.handoff import HandoffManager, HandoffProposal, create_handoff
 from orchestration.agent_registry import AgentRegistry
 from agents.map import MapAgent
@@ -297,6 +308,7 @@ class Pipeline:
             settings.supabase_url,
             settings.supabase_anon_key,
             settings.supabase_service_key,
+            settings.supabase_query_dsn,
         )
         self.episodic = EpisodicMemory(settings.memory_db_path, self.embedder, self.supabase)
         self.rag = RAGPipeline(self.episodic, self.embedder, self.supabase)
@@ -493,6 +505,7 @@ class AgentRouter:
         agent = registry.instantiate(intent, self.pipeline)
         if agent is None:
             return None
+        await _mind_event({"type": "agent_dispatched", "node_id": f"agent:{intent}"})
         try:
             return await asyncio.wait_for(agent.run(task), timeout=300)
         except ConsentRequiredError as exc:
@@ -549,6 +562,7 @@ class AgentRouter:
 
         if intent == "control":
             if tool:
+                await _mind_event({"type": "tool_used", "node_id": f"tool:{tool}"})
                 try:
                     output = await self.pipeline.control.execute(tool, **args)
                     if isinstance(output, bytes) and tool in SCREENSHOT_TOOLS:
@@ -589,6 +603,7 @@ class AgentRouter:
             ("board", _board_agent.run if _board_agent is not None else None),
         ):
             if intent == intent_name and runner is not None:
+                await _mind_event({"type": "agent_dispatched", "node_id": f"agent:{intent}"})
                 try:
                     return await runner(message)
                 except ConsentRequiredError as exc:
@@ -634,6 +649,7 @@ class AgentRouter:
             decision={"ok": result.ok},
             detail={"output": result.output[:500]},
         )
+        await _mind_event({"type": "turn_complete", "intent": result.intent})
         return result
 
     # ---------------------------------------------------------------- stream

@@ -985,6 +985,7 @@ async function startRecording() {
     };
     mediaRecorder.start();
     isRecording = true;
+    recordingStartTime = Date.now(); // Track utterance start time
     $("mic-btn").classList.add("recording");
     orb.classList.add("listening");
     setVoiceStatus("LISTENING…", true);
@@ -1004,6 +1005,7 @@ function stopRecording() {
   }
   if (mediaRecorder && mediaRecorder.state !== "inactive") mediaRecorder.stop();
   isRecording = false;
+  recordingStartTime = null; // Reset utterance timing
   $("mic-btn").classList.remove("recording");
   orb.classList.remove("listening");
   setVoiceStatus("PROCESSING…", false);
@@ -1046,7 +1048,9 @@ function setupSilenceDetection(stream) {
   // How long the room must stay quiet before Emma stops listening.  Long
   // enough that natural mid-thought pauses don't cut you off — she stops
   // when she's confident you're done talking.  (Tune here: 5000 = 5s.)
-  const SILENCE_DURATION = 5000; // ms of silence before stopping
+  const SILENCE_DURATION = 1500; // ms of silence before stopping (reduced from 5000 for faster response)
+  const MAX_RECORDING_DURATION = 60000; // max utterance duration (60s safety cap)
+  let recordingStartTime = null;
 
   scriptProcessor.onaudioprocess = () => {
     if (!isRecording) return;
@@ -1060,6 +1064,12 @@ function setupSilenceDetection(stream) {
     }
     const average = values / array.length;
     const normalized = average / 255;
+    
+    // Check max duration safety cap
+    if (recordingStartTime && Date.now() - recordingStartTime > MAX_RECORDING_DURATION) {
+      stopRecording();
+      return;
+    }
     
     if (normalized < SILENCE_THRESHOLD) {
       if (!silenceStartTime) {

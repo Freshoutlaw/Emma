@@ -24,7 +24,7 @@ data/
 Thumbs.db
 
 # Freebuff desktop app state (thread/workspace DB)
-.freebuff/
+# .freebuff/
 
 # pytest cache
 .pytest_cache/
@@ -34,3 +34,6 @@ env_new
 
 # Pre-seeded wheels for flaky-network builds (see infrastructure/Dockerfile)
 infrastructure/wheels/*.whl
+
+# Temporary files
+tmp/

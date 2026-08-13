@@ -147,3 +147,30 @@ async def display_set(body: DisplayRequest, request: Request):
     pipeline.guardian.guard("display_toggle", {"panel": body.panel, "reason": body.reason})
     state = pipeline.display.set(body.panel, reason=body.reason, payload=body.payload)
     return state
+
+
+@router.post("/supabase/schema")
+async def apply_supabase_schema(request: Request):
+    """Apply Emma's schema to Supabase (creates pgvector extension, episodes table, etc.).
+
+    Requires EMMA_SUPABASE_QUERY_DSN to be configured for direct PostgreSQL access.
+    This is idempotent and safe to run multiple times.
+    """
+    pipeline = _pipeline(request)
+    pipeline.guardian.guard("supabase_schema_apply", {"reason": "schema application request"})
+    
+    if not pipeline.supabase.is_configured():
+        raise HTTPException(status_code=400, detail="Supabase is not configured. Set EMMA_SUPABASE_URL, EMMA_SUPABASE_ANON_KEY, and EMMA_SUPABASE_SERVICE_KEY.")
+    
+    result = await pipeline.supabase.apply_schema()
+    
+    if result["success"]:
+        # Clear schema cache so next health check sees the new schema
+        pipeline.supabase._schema_cache = None
+        return {
+            "success": True,
+            "message": "Schema applied successfully",
+            "statements_executed": result.get("statements_executed", 0)
+        }
+    else:
+        raise HTTPException(status_code=500, detail=result.get("error", "Schema application failed"))

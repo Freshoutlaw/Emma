@@ -26,7 +26,7 @@ from agents.router import Pipeline
 from backend.config import Settings
 from backend.middleware.auth import AuthMiddleware
 from backend.middleware.logging import RequestLoggingMiddleware
-from backend.routers import chat, security, system, tts, voice, performance
+from backend.routers import chat, security, system, tts, voice, performance, mind
 from board.scheduler import BoardScheduler
 
 
@@ -93,10 +93,17 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(system.router)
     app.include_router(security.router)
     app.include_router(performance.router)
+    app.include_router(mind.router)
 
     @app.get("/api/health")
     async def health():
         return {"status": "ok", "name": settings.app_name, "version": settings.version, "domain": domain}
+
+    # The Living Mind (Tier 1-8) — a dedicated full-page route, mounted
+    # before the HUD catch-all so /mind/* never falls through to it.
+    mind_dir = settings.project_root / "interfaces" / "mind"
+    if mind_dir.exists():
+        app.mount("/mind", StaticFiles(directory=str(mind_dir), html=True), name="mind")
 
     # Serve the HUD last so API routes take precedence over the catch-all mount.
     hud_dir = settings.hud_dir

@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Emma — Living Mind</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #05070B;
+    --core: #2DD4A8;
+    --memory: #A78BFA;
+    --working: #67E8F9;
+    --agents: #E88FB3;
+    --knowledge: #F5A524;
+    --rim: #8B93A1;
+    --text: #D8DEE9;
+    --dim: #5A6472;
+    --panel: rgba(10, 14, 22, 0.92);
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: var(--bg); }
+  body { font-family: 'Inter', system-ui, sans-serif; color: var(--text); }
+  #view { position: fixed; inset: 0; }
+  canvas { display: block; }
+
+  /* ---- HUD ---- */
+  #hud { position: fixed; top: 0; left: 0; right: 0; display: flex; align-items: baseline;
+         justify-content: space-between; padding: 14px 18px; pointer-events: none;
+         z-index: 10; }
+  #hud h1 { font-size: 15px; font-weight: 600; letter-spacing: 0.08em; color: #fff;
+            text-shadow: 0 0 18px rgba(45, 212, 168, 0.55); }
+  #hud h1 .dot { color: var(--core); }
+  #stats { font-size: 11px; color: var(--dim); letter-spacing: 0.04em; text-align: right; }
+  #stats.err { color: #F87171; }
+
+  /* ---- legend ---- */
+  #legend { position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+            display: flex; gap: 8px; z-index: 10; flex-wrap: wrap; justify-content: center; }
+  .chip { display: flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: 999px;
+          background: rgba(10, 14, 22, 0.75); border: 1px solid rgba(255,255,255,0.10);
+          font-size: 11px; color: var(--text); cursor: pointer; user-select: none;
+          transition: border-color .15s, color .15s; }
+  .chip:hover { border-color: rgba(255,255,255,0.28); }
+  .chip.off { opacity: 0.32; text-decoration: line-through; }
+  .chip .sw { width: 9px; height: 9px; border-radius: 50%; }
+
+  /* ---- search ---- */
+  #search { position: fixed; top: 14px; left: 50%; transform: translateX(-50%);
+            z-index: 10; pointer-events: auto; }
+  #search input { width: 240px; padding: 8px 14px; border-radius: 999px; border: 1px solid rgba(255,255,255,0.12);
+                  background: rgba(10, 14, 22, 0.8); color: var(--text); font-family: inherit;
+                  font-size: 12px; outline: none; backdrop-filter: blur(6px); }
+  #search input:focus { border-color: rgba(45, 212, 168, 0.5); }
+  #search .hint { position: absolute; right: 14px; top: 50%; transform: translateY(-50%);
+                  font-size: 10px; color: var(--dim); pointer-events: none; }
+
+  /* ---- tooltip ---- */
+  #tooltip { position: fixed; z-index: 20; pointer-events: none; display: none;
+             max-width: 320px; padding: 8px 11px; border-radius: 8px;
+             background: rgba(8, 11, 18, 0.94); border: 1px solid rgba(255,255,255,0.12);
+             font-size: 11px; line-height: 1.45; box-shadow: 0 6px 24px rgba(0,0,0,0.5); }
+  #tooltip .tt-title { font-weight: 600; font-size: 12px; color: #fff; }
+  #tooltip .tt-region { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; }
+  #tooltip .tt-line { color: var(--dim); margin-top: 3px; }
+
+  /* ---- inspector ---- */
+  #inspector { position: fixed; top: 0; right: 0; bottom: 0; width: 380px; max-width: 92vw;
+               background: var(--panel); border-left: 1px solid rgba(255,255,255,0.10);
+               transform: translateX(105%); transition: transform .25s ease; z-index: 15;
+               display: flex; flex-direction: column; backdrop-filter: blur(10px); }
+  #inspector.open { transform: translateX(0); }
+  #inspector .head { padding: 16px 18px 12px; border-bottom: 1px solid rgba(255,255,255,0.08);
+                     display: flex; align-items: center; gap: 10px; }
+  #inspector .badge { font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+                      padding: 3px 8px; border-radius: 999px; border: 1px solid currentColor; }
+  #inspector .head h2 { font-size: 15px; font-weight: 600; flex: 1; word-break: break-word; }
+  #inspector .close { background: none; border: none; color: var(--dim); font-size: 18px;
+                      cursor: pointer; padding: 4px 8px; }
+  #inspector .close:hover { color: #fff; }
+  #inspector .body { flex: 1; overflow-y: auto; padding: 14px 18px; font-size: 13px; line-height: 1.55; }
+  #inspector .body .field { color: var(--dim); font-size: 10px; text-transform: uppercase;
+                            letter-spacing: 0.1em; margin: 12px 0 4px; }
+  #inspector .body .meta { color: var(--dim); font-size: 11px; }
+  #inspector .body pre { white-space: pre-wrap; word-break: break-word; font-family: inherit; }
+  #inspector .body a { color: var(--core); cursor: pointer; display: block; padding: 3px 0; }
+  #inspector .body a .sim { color: var(--dim); font-size: 11px; }
+  #inspector .loading { color: var(--dim); font-style: italic; }
+
+  /* ---- labels (CSS2D) ---- */
+  .mind-label { color: rgba(255,255,255,0.85); font-size: 11px; font-weight: 500;
+                letter-spacing: 0.06em; text-shadow: 0 0 12px rgba(0,0,0,0.9);
+                pointer-events: none; white-space: nowrap; }
+  .mind-label.region { font-size: 13px; font-weight: 600; letter-spacing: 0.14em;
+                       text-transform: uppercase; opacity: 0.75; }
+
+  @media (max-width: 720px) {
+    #hud h1 { font-size: 12px; }
+    #search input { width: 170px; }
+  }
+</style>
+</head>
+<body>
+  <div id="view"></div>
+  <div id="hud">
+    <h1><span class="dot">●</span> EMMA · LIVING MIND</h1>
+    <div id="stats">loading…</div>
+  </div>
+  <div id="search"><input id="search-input" placeholder="search the mind…" autocomplete="off"><span class="hint">⏎</span></div>
+  <div id="legend"></div>
+  <div id="tooltip"></div>
+  <aside id="inspector">
+    <div class="head">
+      <span class="badge" id="ins-badge" style="color:var(--core)">node</span>
+      <h2 id="ins-title"></h2>
+      <button class="close" id="ins-close" title="close">✕</button>
+    </div>
+    <div class="body" id="ins-body"></div>
+  </aside>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.174.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.174.0/examples/jsm/"
+    }
+  }
+  </script>
+  <script type="module" src="./scene.js"></script>
+</body>
+</html>

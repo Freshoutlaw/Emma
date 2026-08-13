@@ -41,6 +41,6 @@ async def get_segment_audio(segment_id: str, request: Request):
         media_type="audio/mpeg",
         headers={
             "Cache-Control": "private, max-age=120",
-            "X-Segment-Text": text[:200],  # useful for debugging
+            # X-Segment-Text removed due to HTTP header validation issues
         },
     )

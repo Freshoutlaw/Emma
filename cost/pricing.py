@@ -9,6 +9,8 @@ Rates are USD per million tokens, taken from each provider's published pricing
   cached input tokens are billed at a **50% discount** — that discount is what
   the dashboard reports as cache savings.
 - Ollama (local) is free.
+- Ollama cloud models (gemma4, etc.) are billed through Ollama's cloud service
+  and recorded here as $0 since pricing is handled by Ollama's billing system.
 
 Pricing changes over time. **This table is the thing to update** when a rate
 changes; nothing else in the cost dashboard hard-codes a number.
@@ -28,6 +30,8 @@ MODEL_PRICING: dict[str, dict[str, Optional[float]]] = {
     "llama-3.3-70b-versatile": {"input": 0.59, "output": 0.79, "cache_read": 0.295},
     "llama-3.3-70b":           {"input": 0.59, "output": 0.79, "cache_read": 0.295},
     "llama-3.1-8b-instant":    {"input": 0.05, "output": 0.08, "cache_read": 0.025},
+    "gemma4":                  {"input": 0.0,  "output": 0.0,  "cache_read": 0.0},   # Ollama cloud — billed through Ollama
+    "gemma4:31b":              {"input": 0.0,  "output": 0.0,  "cache_read": 0.0},   # Ollama cloud — billed through Ollama
     "qwen3":                   {"input": 0.0,  "output": 0.0,  "cache_read": 0.0},   # Ollama local — free
     "nomic-embed-text":        {"input": 0.0,  "output": 0.0,  "cache_read": 0.0},   # Ollama local — free
 }

@@ -9,6 +9,7 @@ OPTIMIZATIONS:
 - Circuit breaker pattern to avoid repeated failed calls
 - Connection pooling with proper lifecycle
 - Health check caching
+- Schema application via PostgreSQL direct connection
 """
 
 from __future__ import annotations
@@ -29,10 +30,12 @@ class SupabaseClient:
         url: Optional[str] = None,
         anon_key: Optional[str] = None,
         service_key: Optional[str] = None,
+        query_dsn: Optional[str] = None,
     ) -> None:
         self.url = (url or "").rstrip("/")
         self.anon_key = anon_key
         self.service_key = service_key
+        self.query_dsn = query_dsn
         self._http: Optional[httpx.AsyncClient] = None
         # Circuit breaker state
         self._circuit_breaker_open = False
@@ -223,3 +226,105 @@ class SupabaseClient:
         except Exception as e:
             self._record_failure()
             raise SupabaseError(f"Supabase RPC failed: {e}")
+
+    # ------------------------------------------------------------------ schema
+    def get_schema_sql(self) -> str:
+        """Return the SQL schema for Emma's episodic memory + pgvector RAG.
+
+        This is idempotent: safe to run multiple times. Returns the SQL that
+        creates the pgvector extension, episodes table, HNSW index, and
+        match_episodes RPC function.
+        """
+        return """-- ============================================================================
+-- Emma — Supabase schema (episodic memory + pgvector RAG)
+-- ============================================================================
+-- This is idempotent: safe to re-run.
+
+-- pgvector extension for vector(384) embeddings (nomic-embed-text).
+create extension if not exists vector;
+
+-- Episodic memory rows.  `embedding` accepts pgvector's text form, which is
+-- exactly what Emma sends (a JSON array string like "[0.1, 0.2, ...]").
+create table if not exists public.episodes (
+    id        text primary key,
+    ts        timestamptz not null default now(),
+    kind      text not null default 'episode',
+    content   text not null,
+    payload   text,
+    embedding vector(384)
+);
+
+-- HNSW index for fast cosine-similarity search.
+create index if not exists episodes_embedding_idx
+    on public.episodes
+    using hnsw (embedding vector_cosine_ops);
+
+-- RAG recall: returns the top-N episodes by cosine similarity.  The signature
+-- matches what Emma calls: match_episodes(query_embedding, match_count).
+create or replace function public.match_episodes(
+    query_embedding vector(384),
+    match_count int
+)
+returns table (id text, content text, kind text, created_at timestamptz, similarity float)
+language sql stable
+as $$
+    select e.id, e.content, e.kind, e.ts,
+           1 - (e.embedding <=> query_embedding) as similarity
+    from public.episodes e
+    order by e.embedding <=> query_embedding
+    limit match_count;
+$$;
+
+-- Note: RLS is left disabled so the service key (Emma's backend) can read and
+-- write freely.  If you enable RLS, add a policy allowing the `anon` role
+-- (or keep all access service-key-only).
+"""
+
+    async def apply_schema(self) -> dict[str, Any]:
+        """Apply the Emma schema to Supabase using direct PostgreSQL connection.
+
+        Requires `query_dsn` to be configured (PostgreSQL connection string).
+        Returns a dict with success status and any errors encountered.
+        """
+        if not self.query_dsn:
+            return {
+                "success": False,
+                "error": "Supabase query DSN not configured. Set EMMA_SUPABASE_QUERY_DSN or apply schema manually via SQL Editor."
+            }
+
+        try:
+            import asyncpg
+        except ImportError:
+            return {
+                "success": False,
+                "error": "asyncpg not installed. Install with: pip install asyncpg"
+            }
+
+        try:
+            conn = await asyncpg.connect(self.query_dsn)
+            schema_sql = self.get_schema_sql()
+            
+            # Split by semicolon and execute each statement
+            statements = [s.strip() for s in schema_sql.split(';') if s.strip() and not s.strip().startswith('--')]
+            
+            errors = []
+            for stmt in statements:
+                try:
+                    await conn.execute(stmt)
+                except Exception as e:
+                    # Some errors are acceptable (e.g., extension already exists)
+                    if "already exists" not in str(e).lower():
+                        errors.append(f"{stmt[:50]}...: {e}")
+            
+            await conn.close()
+            
+            return {
+                "success": len(errors) == 0,
+                "errors": errors if errors else None,
+                "statements_executed": len(statements)
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to connect or execute schema: {e}"
+            }
