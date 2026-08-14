@@ -1,0 +1,35 @@
+# Railway.app deployment configuration for Emma AI with Ollama
+
+[build]
+  builder = "DOCKERFILE"
+  dockerfilePath = "infrastructure/Dockerfile"
+
+[deploy]
+  healthcheckPath = "/api/system/status"
+  healthcheckTimeout = 100
+  restartPolicyType = "ON_FAILURE"
+  restartPolicyMaxRetries = 10
+
+[env]
+  EMMA_DOMAIN = "onrender.com"
+  EMMA_HOST = "0.0.0.0"
+  EMMA_PORT = "8000"
+  EMMA_APP_NAME = "emma-ai"
+  EMMA_VERSION = "0.1.0"
+  EMMA_CONSENT_MODE = "once"
+  EMMA_APPROVAL_TTL = "3600"
+  EMMA_AUDIT_MAX_ENTRIES = "5000"
+  EMMA_NETWORK_GATE_OPEN = "true"
+  EMMA_OLLAMA_URL = "http://localhost:11434"
+  EMMA_LOCAL_MODEL = "phi3:mini"
+  EMMA_OLLAMA_CLOUD_MODEL = ""
+  EMMA_EMBEDDING_MODEL = "nomic-embed-text"
+  EMMA_EMBEDDING_DIM = "384"
+  EMMA_TTS_VOICE = "en-US-JennyNeural"
+  EMMA_VOICE_VAD_THRESHOLD = "0.5"
+  EMMA_VOICE_SILENCE_DURATION_MS = "1500"
+  EMMA_VOICE_MAX_DURATION_MS = "60000"
+  EMMA_BOARD_COST_CEILING_USD = "0.50"
+  EMMA_BOARD_MAX_SEATS = "4"
+  EMMA_MQTT_HOST = "localhost"
+  EMMA_MQTT_PORT = "1883"
