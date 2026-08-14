@@ -118,7 +118,7 @@ def build_memory_web(episodes: list[dict], core_id: str) -> tuple[list[dict], li
 
     # ---- similarity matrix (numpy, trivial at this size) ----------------
     # Embeddings can have different dimensions if the embedding model ever
-    # changed (104 vectors @ 384-dim, 98 @ 768-dim in this store). Cosine
+    # changed (104 vectors @ 768-dim, 98 @ 384-dim in this store). Cosine
     # across dimensions is meaningless, so similarity is computed WITHIN
     # each dimension group and the groups never mix.
     embedded = [(i, v) for i, v in enumerate(vecs_by_idx) if v]

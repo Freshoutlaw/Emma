@@ -143,7 +143,7 @@ def test_fallback_matches_observed_model_dim(monkeypatch):
     configured-dim fallback: after the first real vector, the deterministic
     fallback adopts the observed dimension so cosine scoring never truncates."""
     # The model returns 3-dim vectors while the config claims dim=2 — the
-    # exact live condition (nomic-embed-text -> 768 vs configured 384).
+    # exact live condition (nomic-embed-text -> 768 vs configured 768).
     class Fake3:
         def __init__(self, *args, **kwargs):
             self.posts = []

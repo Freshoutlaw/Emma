@@ -14,6 +14,7 @@ OPTIMIZATIONS:
 
 from __future__ import annotations
 
+import re
 import time
 from typing import Any, Optional
 
@@ -128,7 +129,7 @@ class SupabaseClient:
         self,
         table: str = "episodes",
         rpc: str = "match_episodes",
-        embedding_dim: int = 384,
+        embedding_dim: int = 768,
     ) -> Optional[bool]:
         """Verify the pgvector memory schema is actually usable end to end.
 
@@ -240,7 +241,7 @@ class SupabaseClient:
 -- ============================================================================
 -- This is idempotent: safe to re-run.
 
--- pgvector extension for vector(384) embeddings (nomic-embed-text).
+-- pgvector extension for vector(768) embeddings (nomic-embed-text).
 create extension if not exists vector;
 
 -- Episodic memory rows.  `embedding` accepts pgvector's text form, which is
@@ -251,7 +252,7 @@ create table if not exists public.episodes (
     kind      text not null default 'episode',
     content   text not null,
     payload   text,
-    embedding vector(384)
+    embedding vector(768)
 );
 
 -- HNSW index for fast cosine-similarity search.
@@ -262,7 +263,7 @@ create index if not exists episodes_embedding_idx
 -- RAG recall: returns the top-N episodes by cosine similarity.  The signature
 -- matches what Emma calls: match_episodes(query_embedding, match_count).
 create or replace function public.match_episodes(
-    query_embedding vector(384),
+    query_embedding vector(768),
     match_count int
 )
 returns table (id text, content text, kind text, created_at timestamptz, similarity float)
@@ -300,13 +301,11 @@ $$;
                 "error": "asyncpg not installed. Install with: pip install asyncpg"
             }
 
+        conn = None
         try:
             conn = await asyncpg.connect(self.query_dsn)
             schema_sql = self.get_schema_sql()
-            
-            # Split by semicolon and execute each statement
-            statements = [s.strip() for s in schema_sql.split(';') if s.strip() and not s.strip().startswith('--')]
-            
+            statements = self.split_sql_statements(schema_sql)
             errors = []
             for stmt in statements:
                 try:
@@ -315,9 +314,6 @@ $$;
                     # Some errors are acceptable (e.g., extension already exists)
                     if "already exists" not in str(e).lower():
                         errors.append(f"{stmt[:50]}...: {e}")
-            
-            await conn.close()
-            
             return {
                 "success": len(errors) == 0,
                 "errors": errors if errors else None,
@@ -328,3 +324,84 @@ $$;
                 "success": False,
                 "error": f"Failed to connect or execute schema: {e}"
             }
+        finally:
+            if conn is not None:
+                await conn.close()
+
+    @staticmethod
+    def split_sql_statements(sql: str) -> list[str]:
+        """Split a SQL script into statements on top-level semicolons only.
+
+        The naive ``str.split(';')`` approach broke here twice: each split
+        piece begins with a ``--`` comment line, so a ``startswith('--')``
+        filter threw the statement out with the comment, and the
+        ``match_episodes`` body is dollar-quoted (``$$...$$``) and contains
+        semicolons, which truncated the function mid-body.
+
+        This scans the script as a small SQL lexer: ``--`` line comments,
+        ``/* */`` block comments, single-quoted strings (with ``''`` escapes)
+        and dollar-quoted bodies (``$$...$$`` / ``$tag$...$tag$``) are skipped
+        in full, so a semicolon only ever terminates a real statement — prose
+        in comments (apostrophes included) can't confuse the split, and the
+        emitted statements are clean SQL with no comment prefix.
+        """
+        statements: list[str] = []
+        current: list[str] = []
+        i, n = 0, len(sql)
+        quote_tag: Optional[str] = None
+        while i < n:
+            ch = sql[i]
+            if quote_tag is not None:
+                if sql.startswith(quote_tag, i):
+                    current.append(quote_tag)
+                    i += len(quote_tag)
+                    quote_tag = None
+                else:
+                    current.append(ch)
+                    i += 1
+            elif ch == "-" and i + 1 < n and sql[i + 1] == "-":
+                # Line comment: skip to end of line.
+                while i < n and sql[i] != "\n":
+                    i += 1
+            elif ch == "/" and i + 1 < n and sql[i + 1] == "*":
+                # Block comment: skip to closing */.
+                end = sql.find("*/", i + 2)
+                i = n if end == -1 else end + 2
+            elif ch == "'":
+                # Single-quoted string literal; '' is an escaped quote.
+                current.append(ch)
+                i += 1
+                while i < n:
+                    if sql[i] == "'":
+                        if sql.startswith("''", i):
+                            current.append("''")
+                            i += 2
+                        else:
+                            current.append("'")
+                            i += 1
+                            break
+                    else:
+                        current.append(sql[i])
+                        i += 1
+            elif ch == "$":
+                tag = re.match(r"\$(?:[A-Za-z_][A-Za-z0-9_]*)?\$", sql[i:])
+                if tag:
+                    quote_tag = tag.group(0)
+                    current.append(quote_tag)
+                    i += len(quote_tag)
+                else:
+                    current.append(ch)
+                    i += 1
+            elif ch == ";":
+                stmt = "".join(current).strip()
+                if stmt:
+                    statements.append(stmt)
+                current = []
+                i += 1
+            else:
+                current.append(ch)
+                i += 1
+        stmt = "".join(current).strip()
+        if stmt:
+            statements.append(stmt)
+        return statements
