@@ -1,5 +1,5 @@
 # fly.toml app configuration for Emma AI with Ollama
-app = "emma-ai"
+app = "emma-ai-azfresh"  # Unique app name to avoid conflicts
 primary_region = "ord"
 
 [build]
