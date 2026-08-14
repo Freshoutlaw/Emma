@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     ollama_cloud_model: Optional[str] = None  # EMMA_OLLAMA_CLOUD_MODEL
     cloud_model: str = "llama-3.3-70b-versatile"
     embedding_model: str = "nomic-embed-text"
-    embedding_dim: int = 384
+    embedding_dim: int = 768
 
     # --- Ollama memory footprint (None = let Ollama use its server defaults)
     # On memory-constrained boxes (e.g. 8 GiB with editors running), cap the

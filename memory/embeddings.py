@@ -52,7 +52,7 @@ class Embedder:
         self,
         ollama_url: str = "http://localhost:11434",
         model: str = "nomic-embed-text",
-        dim: int = 384,
+        dim: int = 768,
         batch_window: float = BATCH_WINDOW_S,
         batch_size: int = BATCH_MAX_SIZE,
     ) -> None:

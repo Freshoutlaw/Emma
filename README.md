@@ -215,7 +215,7 @@ the HUD opens it manually.
   run it in the Supabase SQL Editor, or create just the RPC:
 
 ```sql
-create or replace function match_episodes(query_embedding vector(384), match_count int)
+create or replace function match_episodes(query_embedding vector(768), match_count int)
 returns table (id text, content text, kind text, created_at timestamptz, similarity float)
 language sql stable as $$
   select e.id, e.content, e.kind, e.ts,

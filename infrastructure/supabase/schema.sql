@@ -8,7 +8,7 @@
 -- SQLite fallback) and RAG recall uses the `match_episodes` pgvector RPC.
 -- ============================================================================
 
--- pgvector extension for vector(384) embeddings (nomic-embed-text).
+-- pgvector extension for vector(768) embeddings (nomic-embed-text).
 create extension if not exists vector;
 
 -- Episodic memory rows.  `embedding` accepts pgvector's text form, which is
@@ -19,7 +19,7 @@ create table if not exists public.episodes (
     kind      text not null default 'episode',
     content   text not null,
     payload   text,
-    embedding vector(384)
+    embedding vector(768)
 );
 
 -- HNSW index for fast cosine-similarity search.
@@ -30,7 +30,7 @@ create index if not exists episodes_embedding_idx
 -- RAG recall: returns the top-N episodes by cosine similarity.  The signature
 -- matches what Emma calls: match_episodes(query_embedding, match_count).
 create or replace function public.match_episodes(
-    query_embedding vector(384),
+    query_embedding vector(768),
     match_count int
 )
 returns table (id text, content text, kind text, created_at timestamptz, similarity float)
