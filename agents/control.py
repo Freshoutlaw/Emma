@@ -7,6 +7,7 @@ audited.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -74,10 +75,24 @@ class ControlAgent(BaseAgent):
         "mqtt_publish": {"description": "Publish a message to the MQTT broker.", "args": {"topic": "str", "payload": "str"}},
         "browser_open": {"description": "Open a URL in a headless browser.", "args": {"url": "str"}},
         "browser_screenshot": {"description": "Screenshot the headless browser page. The image is passed to Emma's vision model, which can describe and answer questions about what is on the page.", "args": {"path": "str (optional)"}},
+        "browser_click": {"description": "Click an element on the browser page by CSS selector.", "args": {"selector": "str"}},
+        "browser_fill": {"description": "Fill a form field on the browser page by CSS selector.", "args": {"selector": "str", "value": "str"}},
+        "browser_scroll": {"description": "Scroll the browser page by pixels (positive = down, negative = up).", "args": {"pixels": "int"}},
+        "browser_hover": {"description": "Hover over an element on the browser page by CSS selector.", "args": {"selector": "str"}},
+        "browser_press_key": {"description": "Press a keyboard key in the browser (e.g., 'Enter', 'Escape').", "args": {"key": "str"}},
+        "browser_select_option": {"description": "Select an option from a dropdown by CSS selector.", "args": {"selector": "str", "value": "str"}},
+        "browser_go_back": {"description": "Navigate back in browser history.", "args": {}},
+        "browser_go_forward": {"description": "Navigate forward in browser history.", "args": {}},
+        "browser_get_text": {"description": "Get text content from the browser page or specific element.", "args": {"selector": "str (optional)"}},
+        "browser_get_attribute": {"description": "Get attribute value from a browser element.", "args": {"selector": "str", "attribute": "str"}},
         "desktop_notify": {"description": "Show a desktop notification.", "args": {"title": "str", "message": "str"}},
         "desktop_screenshot": {"description": "Capture a screenshot of the desktop. The image is passed to Emma's vision model, which can describe and answer questions about what is on the screen.", "args": {"path": "str (optional)"}},
         "desktop_open": {"description": "Open an application by name (Windows/macOS/Linux).", "args": {"app": "str"}},
         "desktop_close": {"description": "Close an application by name (Windows/macOS/Linux).", "args": {"app": "str"}},
+        "desktop_move_mouse": {"description": "Move mouse to specific coordinates.", "args": {"x": "int", "y": "int"}},
+        "desktop_click": {"description": "Click at specific coordinates.", "args": {"x": "int", "y": "int", "button": "str (default 'left')"}},
+        "desktop_type": {"description": "Type text using keyboard simulation.", "args": {"text": "str", "interval": "float (default 0.02)"}},
+        "desktop_press_key": {"description": "Press a keyboard key.", "args": {"key": "str"}},
     }
 
     def __init__(self, pipeline: "Pipeline") -> None:
@@ -111,11 +126,47 @@ class ControlAgent(BaseAgent):
             "mqtt_publish": self.mqtt.publish,
             "browser_open": self.browser.open,
             "browser_screenshot": self.browser.screenshot,
+            "browser_click": self.browser.click,
+            "browser_fill": self.browser.fill,
+            "browser_scroll": self.browser.scroll,
+            "browser_hover": self.browser.hover,
+            "browser_press_key": self.browser.press_key,
+            "browser_select_option": self.browser.select_option,
+            "browser_go_back": self.browser.go_back,
+            "browser_go_forward": self.browser.go_forward,
+            "browser_get_text": self.browser.get_text,
+            "browser_get_attribute": self.browser.get_attribute,
             "desktop_notify": self.desktop.notify,
             "desktop_screenshot": self.desktop.screenshot,
             "desktop_open": self.desktop.open_app,
             "desktop_close": self.desktop.close_app,
+            "desktop_move_mouse": self.desktop.move_mouse,
+            "desktop_click": self.desktop.click,
+            "desktop_type": self.desktop.type_text,
+            "desktop_press_key": self._desktop_press_key,
         }
+
+    async def _desktop_press_key(self, key: str) -> dict:
+        """Internal wrapper for desktop key press."""
+        import pyautogui
+        key_map = {
+            "enter": "enter",
+            "return": "enter",
+            "escape": "esc",
+            "tab": "tab",
+            "space": "space",
+            "backspace": "backspace",
+            "delete": "delete",
+            "up": "up",
+            "down": "down",
+            "left": "left",
+            "right": "right",
+        }
+        mapped_key = key_map.get(key.lower(), key)
+        await asyncio.to_thread(pyautogui.press, mapped_key)
+        return {"pressed": mapped_key}
+
+    # ---------------------------------------------------------------- scoping
 
     # ---------------------------------------------------------------- scoping
     def _allowlist_for(self, actor: str) -> frozenset[str]:

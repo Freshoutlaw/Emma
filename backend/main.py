@@ -26,7 +26,7 @@ from agents.router import Pipeline
 from backend.config import Settings
 from backend.middleware.auth import AuthMiddleware
 from backend.middleware.logging import RequestLoggingMiddleware
-from backend.routers import chat, security, system, tts, voice, performance, mind
+from backend.routers import chat, security, system, tts, voice, performance, mind, live
 from board.scheduler import BoardScheduler
 
 
@@ -94,6 +94,7 @@ def create_app(settings: Optional[Settings] = None) -> FastAPI:
     app.include_router(security.router)
     app.include_router(performance.router)
     app.include_router(mind.router)
+    app.include_router(live.router)
 
     @app.get("/api/health")
     async def health():

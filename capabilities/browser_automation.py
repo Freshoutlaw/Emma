@@ -127,3 +127,65 @@ class BrowserAutomation:
         self._browser = None
         self._page = None
         self._playwright = None
+
+    async def scroll(self, pixels: int = 500) -> dict:
+        """Scroll the page by given pixels (positive = down, negative = up)."""
+        self.guardian.guard("browser_automation", {"action": "scroll", "pixels": pixels})
+        self._check()
+        await self._ensure()
+        await self._page.evaluate(f"window.scrollBy(0, {pixels})")
+        return {"scrolled": pixels}
+
+    async def go_back(self) -> dict:
+        """Navigate back in browser history."""
+        self.guardian.guard("browser_automation", {"action": "go_back"})
+        self._check()
+        await self._ensure()
+        await self._page.go_back()
+        return {"url": self._page.url, "title": await self._page.title()}
+
+    async def go_forward(self) -> dict:
+        """Navigate forward in browser history."""
+        self.guardian.guard("browser_automation", {"action": "go_forward"})
+        self._check()
+        await self._ensure()
+        await self._page.go_forward()
+        return {"url": self._page.url, "title": await self._page.title()}
+
+    async def hover(self, selector: str) -> dict:
+        """Hover over an element."""
+        self.guardian.guard("browser_automation", {"action": "hover", "selector": selector})
+        self._check()
+        await self._ensure()
+        await self._page.hover(selector, timeout=10000)
+        return {"hovered": selector}
+
+    async def get_text(self, selector: str) -> str:
+        """Get text content of a specific element."""
+        self.guardian.guard("browser_automation", {"action": "get_text", "selector": selector})
+        self._check()
+        await self._ensure()
+        return await self._page.inner_text(selector)
+
+    async def get_attribute(self, selector: str, attribute: str) -> str:
+        """Get attribute value of an element."""
+        self.guardian.guard("browser_automation", {"action": "get_attribute", "selector": selector, "attribute": attribute})
+        self._check()
+        await self._ensure()
+        return await self._page.get_attribute(selector, attribute) or ""
+
+    async def press_key(self, key: str) -> dict:
+        """Press a keyboard key (e.g., 'Enter', 'Escape', 'ArrowDown')."""
+        self.guardian.guard("browser_automation", {"action": "press_key", "key": key})
+        self._check()
+        await self._ensure()
+        await self._page.keyboard.press(key)
+        return {"pressed": key}
+
+    async def select_option(self, selector: str, value: str) -> dict:
+        """Select an option from a dropdown."""
+        self.guardian.guard("browser_automation", {"action": "select_option", "selector": selector, "value": value})
+        self._check()
+        await self._ensure()
+        await self._page.select_option(selector, value)
+        return {"selected": value}
