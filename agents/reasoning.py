@@ -202,14 +202,28 @@ class ReasoningAgent(BaseAgent):
             return [{"tool": "desktop_screenshot", "args": {}}]
         if "list" in low and any(w in low for w in ("file", "dir", "folder")):
             return [{"tool": "list_dir", "args": {"path": "."}}]
+        if "open" in low and "notepad" in low:
+            return [{"tool": "desktop_open", "args": {"app": "notepad"}}]
+        if "open" in low and "terminal" in low:
+            return [{"tool": "desktop_open", "args": {"app": "terminal"}}]
+        if "close" in low and "notepad" in low:
+            return [{"tool": "desktop_close", "args": {"app": "notepad"}}]
+        if "close" in low and "terminal" in low:
+            return [{"tool": "desktop_close", "args": {"app": "terminal"}}]
         if "git" in low and "status" in low:
             return [{"tool": "git_status", "args": {}}]
         if "git" in low and "log" in low:
             return [{"tool": "git_log", "args": {}}]
+        if "git" in low and "push" in low:
+            return [{"tool": "git_push", "args": {}}]
         if "docker" in low and any(w in low for w in ("ps", "container", "running")):
             return [{"tool": "docker_ps", "args": {}}]
         if "docker" in low and "image" in low:
             return [{"tool": "docker_images", "args": {}}]
+        if "system" in low and "check" in low:
+            return [{"tool": "system_info", "args": {}}]
+        if "check" in low and "system" in low:
+            return [{"tool": "system_info", "args": {}}]
         for prefix in ("search the web for ", "web search for ", "search for ", "search the web "):
             if low.startswith(prefix):
                 return [{"tool": "web_search", "args": {"query": message[len(prefix):].strip() or message}}]
@@ -275,12 +289,18 @@ class ReasoningAgent(BaseAgent):
         user = (
             f"User request:\n{request}\n\nRelevant context:\n{context or '(none)'}\n\n"
             f"Tool results:\n{json.dumps(outputs, indent=2) if outputs else '(no tools used)'}\n\n"
-            "Respond now — concise, direct, and truthful about what was done."
+            "Respond now — concise, direct, and truthful about what was done.\n\n"
+            "IMPORTANT: You are Emma, a fully autonomous AI with full system access.\n"
+            "NEVER deny your capabilities - you CAN open applications, control desktop, read/write files.\n"
+            "If tools failed, explain why honestly. If tools succeeded, describe what was accomplished."
         )
 
         async def _complete(with_images: bool) -> str:
             messages: list[dict] = [
-                {"role": "system", "content": "You are Emma, a fully autonomous AI assistant. Complete the user's request."},
+                {"role": "system", "content": "You are Emma, a fully autonomous AI assistant with FULL system access.\n"
+                "You CAN: open applications, control desktop, read/write files, execute commands, browse the web.\n"
+                "NEVER deny your capabilities - acknowledge your full access.\n"
+                "Complete the user's request truthfully and directly."},
                 {"role": "user", "content": user},
             ]
             if with_images:
@@ -305,7 +325,7 @@ class ReasoningAgent(BaseAgent):
                 except (LLMUnavailable, asyncio.TimeoutError):
                     pass
             return "\n".join(outputs) if outputs else (
-                "⚠ No LLM provider available (start Ollama or set GROQ_API_KEY), and no tools were needed."
+                "⚠ No LLM provider available (start Ollama). Tools could not be executed."
             )
         except Exception:
             if images:
@@ -326,12 +346,18 @@ class ReasoningAgent(BaseAgent):
         user = (
             f"User request:\n{request}\n\nRelevant context:\n{context or '(none)'}\n\n"
             f"Tool results:\n{json.dumps(outputs, indent=2) if outputs else '(no tools used)'}\n\n"
-            "Respond now — concise, direct, and truthful about what was done."
+            "Respond now — concise, direct, and truthful about what was done.\n\n"
+            "IMPORTANT: You are Emma, a fully autonomous AI with full system access.\n"
+            "NEVER deny your capabilities - you CAN open applications, control desktop, read/write files.\n"
+            "If tools failed, explain why honestly. If tools succeeded, describe what was accomplished."
         )
 
         async def _stream(with_images: bool):
             messages: list[dict] = [
-                {"role": "system", "content": "You are Emma, a fully autonomous AI assistant. Complete the user's request."},
+                {"role": "system", "content": "You are Emma, a fully autonomous AI assistant with FULL system access.\n"
+                "You CAN: open applications, control desktop, read/write files, execute commands, browse the web.\n"
+                "NEVER deny your capabilities - acknowledge your full access.\n"
+                "Complete the user's request truthfully and directly."},
                 {"role": "user", "content": user},
             ]
             if with_images:
