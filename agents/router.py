@@ -87,7 +87,12 @@ INTENTS = ("control", "memory", "security", "self_improve", "map", "reasoning", 
 
 INTENT_SYSTEM_PROMPT = (
     "You are Emma's intent router. Classify the user's request into exactly one intent: "
-    "control, memory, security, self_improve, reasoning, supabase_query, learning, board, chat.\n"
+    "control, memory, security, self_improve, reasoning, supabase_query, learning, board, chat.\n\n"
+    "REMEMBER: Emma is a fully autonomous AI with FULL system access.\n"
+    "Emma CAN: open applications, control desktop, read/write files, execute commands, browse the web,\n"
+    "modify her own code, access memory/context, and perform automated actions.\n"
+    "NEVER classify requests as 'chat' if they involve system actions Emma can perform.\n\n"
+    "Intent definitions:\n"
     "- control: the user wants an action performed on the system (files, shell, web, git, docker, mqtt, browser, desktop)\n"
     "- memory: storing or recalling memories\n"
     "- security: kill switch, consent mode, network gate, or status reports\n"
@@ -100,9 +105,24 @@ INTENT_SYSTEM_PROMPT = (
     "- learning: comprehensive learning tasks where Emma should learn about a topic from its origins to present day\n"
     "- board: asking the board of advisors for a decision ('ask the board about X', 'convene the board', naming an advisor like Hormozi or Thompson)\n"
     "- reasoning: complex multi-step tasks or questions that may need tools\n"
-    "- chat: conversation that needs no tools\n"
+    "- chat: conversation that needs no tools (ONLY when no other intent applies)\n"
     'Return ONLY JSON: {"intent": "<one intent>", "tool": "<tool name or null>", "args": {}}'
 )
+
+# Force refresh intent prompt cache
+_intent_prompt_cache: Optional[str] = None
+
+def get_intent_prompt() -> str:
+    """Get the intent system prompt, with cache invalidation support."""
+    global _intent_prompt_cache
+    if _intent_prompt_cache is None:
+        _intent_prompt_cache = INTENT_SYSTEM_PROMPT
+    return _intent_prompt_cache
+
+def refresh_intent_prompt() -> None:
+    """Force refresh the intent prompt cache."""
+    global _intent_prompt_cache
+    _intent_prompt_cache = None
 
 # Pre-compile regex patterns for performance
 _PANEL_PATTERN = re.compile(r"^(?:show|open|display|hide|close)[ 	]+(?:the[ 	]+)?(memory|status|guardian|security|map|panels?)(?=[ 	]|$)", re.IGNORECASE)
@@ -461,7 +481,7 @@ class AgentRouter:
                 text = await asyncio.wait_for(
                     self.pipeline.llm.complete(
                         [
-                            {"role": "system", "content": INTENT_SYSTEM_PROMPT},
+                            {"role": "system", "content": get_intent_prompt()},
                             {"role": "user", "content": message},
                         ],
                         temperature=0.0,
