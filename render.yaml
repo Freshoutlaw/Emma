@@ -1,13 +1,13 @@
 # Render.com deployment configuration for Emma AI
-# This file defines how Render builds and runs Emma
+# This file defines how Render builds and runs Emma with Ollama
 
 services:
   - type: web
     name: emma-ai
-    env: python
-    plan: free  # Can upgrade to starter ($7/mo) for better performance
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    env: docker
+    plan: starter  # Starter plan ($7/mo) recommended for Ollama + Emma
+    dockerfilePath: ./infrastructure/Dockerfile.render
+    dockerContext: .
     
     # Environment variables (set these in Render dashboard)
     envVars:
@@ -29,11 +29,15 @@ services:
         value: 5000
       - key: EMMA_NETWORK_GATE_OPEN
         value: true
+      # Ollama configuration (local Ollama on Render)
       - key: EMMA_OLLAMA_URL
         value: http://localhost:11434
       - key: EMMA_LOCAL_MODEL
         value: qwen3.5:2b
-      # Cloud model configuration (Groq - only if using Groq)
+      # No Ollama Cloud on Render - using local Ollama
+      - key: EMMA_OLLAMA_CLOUD_MODEL
+        value: ""
+      # No Groq - using Ollama only
       # - key: EMMA_CLOUD_MODEL
       #   value: llama-3.3-70b-versatile
       - key: EMMA_EMBEDDING_MODEL
@@ -58,9 +62,15 @@ services:
         value: 1883
       
       # Optional: Add your API keys in Render dashboard (not here for security)
-      # - key: GROQ_API_KEY  # Only if using Groq instead of Ollama Cloud
+      # - key: DEEPGRAM_API_KEY  # For voice features
       #   sync: false
-      # - key: DEEPGRAM_API_KEY
+      # - key: EMMA_SUPABASE_URL
+      #   sync: false
+      # - key: EMMA_SUPABASE_ANON_KEY
+      #   sync: false
+      # - key: EMMA_SUPABASE_SERVICE_KEY
+      #   sync: false
+      # - key: EMMA_SUPABASE_QUERY_DSN
       #   sync: false
       # - key: EMMA_SUPABASE_URL
       #   sync: false
