@@ -167,8 +167,6 @@ class ControlAgent(BaseAgent):
         return {"pressed": mapped_key}
 
     # ---------------------------------------------------------------- scoping
-
-    # ---------------------------------------------------------------- scoping
     def _allowlist_for(self, actor: str) -> frozenset[str]:
         """The tool names `actor` is permitted to call.
 
