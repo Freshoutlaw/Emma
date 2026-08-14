@@ -9,9 +9,10 @@ This guide walks you through deploying Emma AI to Render.com, a free cloud hosti
 1. **GitHub account** with Emma AI repository pushed
 2. **Render.com account** (free tier available)
 3. **Optional API keys** for enhanced features:
-   - Groq API key (for cloud LLM)
+   - Ollama Cloud model (gemma4:31b-cloud) - works with Ollama Cloud
    - Deepgram API key (for voice features)
    - Supabase credentials (for cloud memory sync)
+   - Groq API key (only if you want to use Groq instead of Ollama Cloud)
 
 ---
 
@@ -73,13 +74,21 @@ git push
 
 Render will auto-load the variables from `render.yaml`, but you need to add **sensitive keys** manually:
 
-#### Required for Cloud LLM (if you want it):
-1. Scroll to **Environment Variables** section
-2. Click **Add Environment Variable**
-3. Add:
+#### Required for Cloud LLM (Ollama Cloud - recommended):
+Since Render doesn't have local Ollama, you have two options:
+
+**Option A: Use Ollama Cloud (Recommended)**
+1. No API key needed - Ollama Cloud works through your local Ollama binary
+2. Emma will use `gemma4:31b-cloud` as configured in `.env.example`
+3. Free tier available with rate limits
+
+**Option B: Use Groq Cloud (Alternative)**
+1. Get a free Groq API key: https://console.groq.com/keys
+2. Add environment variable:
    - **Key**: `GROQ_API_KEY`
-   - **Value**: Your Groq API key (get from https://console.groq.com/keys)
-   - **Sync**: Off (don't sync to GitHub)
+   - **Value**: Your Groq API key
+   - **Sync**: Off
+3. Uncomment `EMMA_CLOUD_MODEL` in environment variables if using Groq
 
 #### Required for Voice Features (optional):
 1. Add:
@@ -123,17 +132,22 @@ Render will auto-load the variables from `render.yaml`, but you need to add **se
 
 ---
 
-## Step 7: Configure Cloud LLM (Optional but Recommended)
+## Step 7: Configure Cloud LLM (Required for Render)
 
-Since Render doesn't have Ollama pre-installed, you have two options:
+Since Render doesn't have Ollama pre-installed, you need a cloud LLM:
 
-### Option A: Use Groq Cloud (Recommended for Render)
+### Option A: Use Ollama Cloud (Recommended)
+Emma is configured to use Ollama Cloud (`gemma4:31b-cloud`) by default:
+- No API key required
+- Works through Ollama's cloud service
+- Free tier with rate limits
+- Already configured in `.env.example`
+
+### Option B: Use Groq Cloud (Alternative)
+If you prefer Groq over Ollama Cloud:
 1. Get a free Groq API key: https://console.groq.com/keys
-2. Add it as environment variable in Render (Step 4.3)
-3. Emma will auto-detect `onrender.com` domain and use Groq
-
-### Option B: Install Ollama on Render (Advanced)
-This requires a custom build with Docker. Not recommended for beginners.
+2. Add `GROQ_API_KEY` as environment variable in Render
+3. Emma will auto-detect and use Groq when available
 
 ---
 
@@ -177,9 +191,10 @@ This requires a custom build with Docker. Not recommended for beginners.
 **Error**: "No LLM provider available"
 
 **Solution**:
-1. Add `GROQ_API_KEY` environment variable
-2. Ensure Groq API key is valid and has quota
-3. Check logs for connection errors
+1. Ensure Ollama Cloud is configured (default: `gemma4:31b-cloud`)
+2. If using Groq instead, add `GROQ_API_KEY` environment variable
+3. Ensure your chosen provider has available quota
+4. Check logs for connection errors
 
 ### Issue 4: Voice Features Not Working
 **Error**: STT/TTS fails
@@ -219,12 +234,15 @@ Edit `requirements.txt` to comment out:
 - Browser: `# playwright>=1.44`
 - Desktop: `# pyautogui>=0.9.54`
 
-### 4. Use Groq for All LLM Calls
-Set environment variable:
+### 4. Optimize LLM Configuration
+Add to environment variables:
 ```
-EMMA_OLLAMA_CLOUD_MODEL=
+EMMA_OLLAMA_NUM_CTX=2048
+EMMA_OLLAMA_KEEP_ALIVE=60
 ```
-This forces Emma to use Groq exclusively (faster, no local Ollama needed).
+
+### 5. Use Ollama Cloud Only
+Ensure `EMMA_OLLAMA_CLOUD_MODEL=gemma4:31b-cloud` is set (default configuration).
 
 ---
 
@@ -249,7 +267,8 @@ This forces Emma to use Groq exclusively (faster, no local Ollama needed).
 | Pro | $70 | Heavy usage, multiple users |
 
 **Additional costs** (if using external services):
-- Groq: Free tier generous, paid tiers available
+- Ollama Cloud: Free tier available, paid tiers for higher limits
+- Groq: Free tier generous, paid tiers available (if using Groq instead)
 - Deepgram: Free tier limited, paid tiers available
 - Supabase: Free tier generous, paid tiers available
 

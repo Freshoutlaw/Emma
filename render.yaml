@@ -33,8 +33,9 @@ services:
         value: http://localhost:11434
       - key: EMMA_LOCAL_MODEL
         value: qwen3.5:2b
-      - key: EMMA_CLOUD_MODEL
-        value: llama-3.3-70b-versatile
+      # Cloud model configuration (Groq - only if using Groq)
+      # - key: EMMA_CLOUD_MODEL
+      #   value: llama-3.3-70b-versatile
       - key: EMMA_EMBEDDING_MODEL
         value: nomic-embed-text
       - key: EMMA_EMBEDDING_DIM
@@ -57,7 +58,7 @@ services:
         value: 1883
       
       # Optional: Add your API keys in Render dashboard (not here for security)
-      # - key: GROQ_API_KEY
+      # - key: GROQ_API_KEY  # Only if using Groq instead of Ollama Cloud
       #   sync: false
       # - key: DEEPGRAM_API_KEY
       #   sync: false
