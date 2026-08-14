@@ -2,20 +2,29 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install dependencies first for better layer caching.
+# Install system dependencies for Ollama
+RUN apt-get update && apt-get install -y \
+    curl \
+    ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Ollama
+RUN curl -fsSL https://ollama.com/install.sh | sh
+
+# Set Ollama home directory
+ENV OLLAMA_HOME=/app/.ollama
+ENV OLLAMA_HOST=0.0.0.0:11434
+RUN mkdir -p $OLLAMA_HOME
+
+# Install Python dependencies
 COPY requirements.txt ./
-# Retry/backoff so transient PyPI timeouts don't fail the build; the
-# BuildKit cache mount lets an interrupted build resume its downloads.
-# Pre-seed huge wheels (e.g. opencv ~74 MB) in infrastructure/wheels/
-# (gitignored) and pip installs them locally instead of over a flaky
-# network; an empty wheelhouse is a no-op.
 ENV PIP_DEFAULT_TIMEOUT=100 \
     PIP_RETRIES=6
 COPY infrastructure/wheels /wheelhouse
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install --find-links /wheelhouse -r requirements.txt
 
-# Copy the project (excluding data/, which is a runtime volume).
+# Copy the project
 COPY backend/ backend/
 COPY agents/ agents/
 COPY capabilities/ capabilities/
@@ -31,6 +40,29 @@ COPY flags/ flags/
 
 RUN mkdir -p /app/data
 
-EXPOSE 8000
+# Create startup script to run Ollama and Emma together
+RUN echo '#!/bin/bash\n\
+# Start Ollama in background\n\
+ollama serve &\n\
+# Wait for Ollama to be ready\n\
+echo "Waiting for Ollama to start..."\n\
+for i in {1..30}; do\n\
+  if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then\n\
+    echo "Ollama is ready!"\n\
+    break\n\
+  fi\n\
+  echo "Waiting for Ollama... ($i/30)"\n\
+  sleep 2\n\
+done\n\
+# Pull model based on environment variable (default to qwen3.5:2b)\n\
+MODEL_NAME=${EMMA_LOCAL_MODEL:-qwen3.5:2b}\n\
+echo "Pulling $MODEL_NAME model..."\n\
+ollama pull $MODEL_NAME\n\
+echo "Model pull complete!"\n\
+# Start Emma\n\
+exec uvicorn backend.main:app --host 0.0.0.0 --port $PORT\n\
+' > /app/start.sh && chmod +x /app/start.sh
 
-CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]
+EXPOSE 8000 11434
+
+CMD ["/app/start.sh"]

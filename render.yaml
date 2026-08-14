@@ -5,8 +5,8 @@ services:
   - type: web
     name: emma-ai
     env: docker
-    plan: starter  # Starter plan ($7/mo) recommended for Ollama + Emma
-    dockerfilePath: ./infrastructure/Dockerfile.render
+    plan: free  # Can upgrade to starter ($7/mo) for better performance
+    dockerfilePath: ./infrastructure/Dockerfile
     dockerContext: .
     
     # Environment variables (set these in Render dashboard)
@@ -29,11 +29,11 @@ services:
         value: 5000
       - key: EMMA_NETWORK_GATE_OPEN
         value: true
-      # Ollama configuration (local Ollama on Render)
+      # Ollama configuration (free tier uses tiny model)
       - key: EMMA_OLLAMA_URL
         value: http://localhost:11434
       - key: EMMA_LOCAL_MODEL
-        value: qwen3.5:2b
+        value: phi3:mini  # Tiny model for free tier (2GB but efficient)
       # No Ollama Cloud on Render - using local Ollama
       - key: EMMA_OLLAMA_CLOUD_MODEL
         value: ""
@@ -63,14 +63,6 @@ services:
       
       # Optional: Add your API keys in Render dashboard (not here for security)
       # - key: DEEPGRAM_API_KEY  # For voice features
-      #   sync: false
-      # - key: EMMA_SUPABASE_URL
-      #   sync: false
-      # - key: EMMA_SUPABASE_ANON_KEY
-      #   sync: false
-      # - key: EMMA_SUPABASE_SERVICE_KEY
-      #   sync: false
-      # - key: EMMA_SUPABASE_QUERY_DSN
       #   sync: false
       # - key: EMMA_SUPABASE_URL
       #   sync: false
