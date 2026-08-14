@@ -31,7 +31,7 @@ class MouseMoveRequest(BaseModel):
 class MouseClickRequest(BaseModel):
     x: int = Field(..., ge=0)
     y: int = Field(..., ge=0)
-    button: str = Field(default="left", regex="^(left|right|middle)$")
+    button: str = Field(default="left", pattern="^(left|right|middle)$")
 
 
 class TypeTextRequest(BaseModel):
@@ -44,7 +44,7 @@ class KeyPressRequest(BaseModel):
 
 
 class BrowserActionRequest(BaseModel):
-    action: str = Field(..., regex="^(click|fill|scroll|hover|press_key|select_option|go_back|go_forward)$")
+    action: str = Field(..., pattern="^(click|fill|scroll|hover|press_key|select_option|go_back|go_forward)$")
     selector: Optional[str] = None
     value: Optional[str] = None
     pixels: Optional[int] = None
