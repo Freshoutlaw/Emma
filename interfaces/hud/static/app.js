@@ -20,6 +20,7 @@ let recordedChunks = [];
 let isRecording = false;
 let silenceTimer = null;
 let recordingTimeout = null;
+let recordingStartTime = null;  // Track utterance start time
 let isTextInputVisible = false;
 let micEnabled = true;          // user hasn't muted via the 🎙 button
 let lastNothingHeard = 0;        // throttle for the always-on silence loop
@@ -1050,7 +1051,6 @@ function setupSilenceDetection(stream) {
   // when she's confident you're done talking.  (Tune here: 5000 = 5s.)
   const SILENCE_DURATION = 1500; // ms of silence before stopping (reduced from 5000 for faster response)
   const MAX_RECORDING_DURATION = 60000; // max utterance duration (60s safety cap)
-  let recordingStartTime = null;
 
   scriptProcessor.onaudioprocess = () => {
     if (!isRecording) return;
