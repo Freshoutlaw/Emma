@@ -4,11 +4,15 @@ This guide walks you through deploying Emma AI to Render.com using Docker with O
 
 ---
 
-## Important: Ollama on Render
+## Important: Ollama Cloud on Render
 
-⚠️ **Ollama Cloud won't work on Render** because it requires the local Ollama binary to proxy requests. Render doesn't have Ollama installed.
+⚠️ **Ollama Cloud requires the Ollama binary** to proxy requests to `ollama.com`.
 
-**Solution**: Use Docker with local Ollama installed in the container.
+**What this means**:
+- Docker installs Ollama binary (routing tool only)
+- **No local models** - still uses Ollama Cloud (`gemma4:31b-cloud`)
+- Binary just routes requests to cloud, doesn't store models
+- Works exactly like your local setup, just in Docker
 
 ---
 
@@ -122,9 +126,9 @@ Render will auto-load variables from `render.yaml`. No additional keys needed fo
 
 | Plan | RAM | CPU | Model | Performance |
 |------|-----|-----|-------|-------------|
-| Free | 512MB | 0.1 | phi3:mini | ⚠️ May not work |
-| Starter | 512MB | 0.5 | qwen3.5:2b | ✅ Minimum viable |
-| Standard | 2GB | 1.0 | qwen3.5:2b | ✅ Good performance |
+| Free | 512MB | 0.1 | gemma4:31b-cloud | ⚠️ May be slow |
+| Starter | 512MB | 0.5 | gemma4:31b-cloud | ✅ Minimum viable |
+| Standard | 2GB | 1.0 | gemma4:31b-cloud | ✅ Good performance |
 
 ---
 
@@ -161,10 +165,10 @@ Render will auto-load variables from `render.yaml`. No additional keys needed fo
 
 Deploying Emma to Render:
 
-1. ✅ Docker with Ollama installed in container
-2. ✅ Model pulls automatically based on EMMA_LOCAL_MODEL
-3. ✅ No Groq required - pure Ollama setup
-4. ✅ Environment variables auto-loaded from render.yaml
-5. ✅ Single Dockerfile works for all tiers (free/paid)
+1. ✅ Docker with Ollama binary installed (routes to cloud)
+2. ✅ Uses Ollama Cloud (`gemma4:31b-cloud`) - no local models
+3. ✅ Environment variables auto-loaded from render.yaml
+4. ✅ Single Dockerfile works for all tiers (free/paid)
+5. ✅ No Groq required - pure Ollama Cloud setup
 
-**Recommendation**: Start with Starter plan ($7/mo) for reliable performance.
+**Recommendation**: Start with Starter plan ($7/mo) for reliable performance with Ollama Cloud.

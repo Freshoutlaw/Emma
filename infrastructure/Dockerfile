@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Ollama
+# Install Ollama binary (needed to proxy to Ollama Cloud)
 RUN curl -fsSL https://ollama.com/install.sh | sh
 
 # Set Ollama home directory
@@ -42,7 +42,7 @@ RUN mkdir -p /app/data
 
 # Create startup script to run Ollama and Emma together
 RUN echo '#!/bin/bash\n\
-# Start Ollama in background\n\
+# Start Ollama in background (needed to proxy to Ollama Cloud)\n\
 ollama serve &\n\
 # Wait for Ollama to be ready\n\
 echo "Waiting for Ollama to start..."\n\
@@ -54,11 +54,8 @@ for i in {1..30}; do\n\
   echo "Waiting for Ollama... ($i/30)"\n\
   sleep 2\n\
 done\n\
-# Pull model based on environment variable (default to qwen3.5:2b)\n\
-MODEL_NAME=${EMMA_LOCAL_MODEL:-qwen3.5:2b}\n\
-echo "Pulling $MODEL_NAME model..."\n\
-ollama pull $MODEL_NAME\n\
-echo "Model pull complete!"\n\
+# NO local model pull - using Ollama Cloud (gemma4:31b-cloud)\n\
+echo "Using Ollama Cloud model - no local model pull needed"\n\
 # Start Emma\n\
 exec uvicorn backend.main:app --host 0.0.0.0 --port $PORT\n\
 ' > /app/start.sh && chmod +x /app/start.sh

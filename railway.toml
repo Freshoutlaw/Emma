@@ -20,9 +20,10 @@
   EMMA_APPROVAL_TTL = "3600"
   EMMA_AUDIT_MAX_ENTRIES = "5000"
   EMMA_NETWORK_GATE_OPEN = "true"
+  # Ollama Cloud configuration (Ollama binary proxies to cloud)
   EMMA_OLLAMA_URL = "http://localhost:11434"
-  EMMA_LOCAL_MODEL = "phi3:mini"
-  EMMA_OLLAMA_CLOUD_MODEL = ""
+  EMMA_OLLAMA_CLOUD_MODEL = "gemma4:31b-cloud"
+  EMMA_LOCAL_MODEL = "qwen3.5:2b"
   EMMA_EMBEDDING_MODEL = "nomic-embed-text"
   EMMA_EMBEDDING_DIM = "384"
   EMMA_TTS_VOICE = "en-US-JennyNeural"

@@ -1,5 +1,5 @@
 # Render.com deployment configuration for Emma AI
-# This file defines how Render builds and runs Emma with Ollama
+# This file defines how Render builds and runs Emma with Ollama Cloud
 
 services:
   - type: web
@@ -29,15 +29,14 @@ services:
         value: 5000
       - key: EMMA_NETWORK_GATE_OPEN
         value: true
-      # Ollama configuration (free tier uses tiny model)
+      # Ollama Cloud configuration (Ollama binary proxies to cloud)
       - key: EMMA_OLLAMA_URL
         value: http://localhost:11434
-      - key: EMMA_LOCAL_MODEL
-        value: phi3:mini  # Tiny model for free tier (2GB but efficient)
-      # No Ollama Cloud on Render - using local Ollama
       - key: EMMA_OLLAMA_CLOUD_MODEL
-        value: ""
-      # No Groq - using Ollama only
+        value: gemma4:31b-cloud
+      - key: EMMA_LOCAL_MODEL
+        value: qwen3.5:2b
+      # No Groq - using Ollama Cloud only
       # - key: EMMA_CLOUD_MODEL
       #   value: llama-3.3-70b-versatile
       - key: EMMA_EMBEDDING_MODEL

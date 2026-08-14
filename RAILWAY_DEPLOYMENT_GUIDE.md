@@ -14,6 +14,18 @@ This guide walks you through deploying Emma AI to Railway.app using Docker with 
 
 ---
 
+## Important: Ollama Cloud on Railway
+
+⚠️ **Ollama Cloud requires the Ollama binary** to proxy requests to `ollama.com`.
+
+**What this means**:
+- Docker installs Ollama binary (routing tool only)
+- **No local models** - still uses Ollama Cloud (`gemma4:31b-cloud`)
+- Binary just routes requests to cloud, doesn't store models
+- Works exactly like your local setup, just in Docker
+
+---
+
 ## Prerequisites
 
 1. **GitHub account** with Emma AI repository pushed
@@ -84,14 +96,16 @@ Railway will automatically detect the Docker configuration from `railway.toml`:
 - **Automatic scaling** when needed
 
 ### Model Choice
-- **phi3:mini**: Small but efficient (2GB)
-- **Good for free tier**: Fits within resource limits
-- **Upgrade later**: Can change to larger model with paid plan
+- **Ollama Cloud**: `gemma4:31b-cloud` (primary)
+- **Local fallback**: `qwen3.5:2b` (if cloud quota runs out)
+- **No model pull needed**: Uses Ollama Cloud directly
+- **Binary only**: Ollama binary just routes to cloud
 
 ### Performance
-- **First deployment**: 10-15 minutes (downloads Ollama + model)
-- **Subsequent deployments**: 2-5 minutes (cached)
-- **Response time**: Fast while app is running
+- **First deployment**: 5-10 minutes (installs Ollama binary only)
+- **Subsequent deployments**: 2-3 minutes (Ollama cached)
+- **Response time**: Fast (uses Ollama Cloud directly)
+- **No model download**: Cloud model fetched on-demand
 
 ---
 
@@ -162,7 +176,8 @@ Deploying Emma to Railway:
 2. ✅ Deploy from GitHub repo
 3. ✅ Automatic Docker detection
 4. ✅ Environment variables auto-loaded
-5. ✅ Ollama + model pull automatically
-6. ✅ No manual configuration needed
+5. ✅ Ollama binary installed (routes to Ollama Cloud)
+6. ✅ Uses Ollama Cloud (`gemma4:31b-cloud`) - no local models
+7. ✅ No manual configuration needed
 
-**Recommendation**: Railway is the best free option with $5 credit and easier setup than Render.
+**Recommendation**: Railway is the best free option with $5 credit and easier setup than Render. Ollama binary in Docker routes to Ollama Cloud exactly like your local setup.
