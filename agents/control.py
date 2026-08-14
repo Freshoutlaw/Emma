@@ -76,6 +76,8 @@ class ControlAgent(BaseAgent):
         "browser_screenshot": {"description": "Screenshot the headless browser page. The image is passed to Emma's vision model, which can describe and answer questions about what is on the page.", "args": {"path": "str (optional)"}},
         "desktop_notify": {"description": "Show a desktop notification.", "args": {"title": "str", "message": "str"}},
         "desktop_screenshot": {"description": "Capture a screenshot of the desktop. The image is passed to Emma's vision model, which can describe and answer questions about what is on the screen.", "args": {"path": "str (optional)"}},
+        "desktop_open": {"description": "Open an application by name (Windows/macOS/Linux).", "args": {"app": "str"}},
+        "desktop_close": {"description": "Close an application by name (Windows/macOS/Linux).", "args": {"app": "str"}},
     }
 
     def __init__(self, pipeline: "Pipeline") -> None:
@@ -111,6 +113,8 @@ class ControlAgent(BaseAgent):
             "browser_screenshot": self.browser.screenshot,
             "desktop_notify": self.desktop.notify,
             "desktop_screenshot": self.desktop.screenshot,
+            "desktop_open": self.desktop.open_app,
+            "desktop_close": self.desktop.close_app,
         }
 
     # ---------------------------------------------------------------- scoping

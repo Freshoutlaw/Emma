@@ -206,29 +206,88 @@ class ReasoningAgent(BaseAgent):
             return [{"tool": "desktop_open", "args": {"app": "notepad"}}]
         if "open" in low and "terminal" in low:
             return [{"tool": "desktop_open", "args": {"app": "terminal"}}]
+        if "open" in low and any(w in low for w in ("calculator", "calc")):
+            return [{"tool": "desktop_open", "args": {"app": "calc"}}]
+        if "open" in low and "browser" in low:
+            return [{"tool": "desktop_open", "args": {"app": "chrome"}}]
+        if "open" in low and "chrome" in low:
+            return [{"tool": "desktop_open", "args": {"app": "chrome"}}]
+        if "open" in low and "firefox" in low:
+            return [{"tool": "desktop_open", "args": {"app": "firefox"}}]
+        if "open" in low and "edge" in low:
+            return [{"tool": "desktop_open", "args": {"app": "msedge"}}]
         if "close" in low and "notepad" in low:
             return [{"tool": "desktop_close", "args": {"app": "notepad"}}]
         if "close" in low and "terminal" in low:
             return [{"tool": "desktop_close", "args": {"app": "terminal"}}]
+        if "close" in low and "browser" in low:
+            return [{"tool": "desktop_close", "args": {"app": "chrome"}}]
+        if "close" in low and "chrome" in low:
+            return [{"tool": "desktop_close", "args": {"app": "chrome"}}]
+        if "close" in low and "firefox" in low:
+            return [{"tool": "desktop_close", "args": {"app": "firefox"}}]
+        if "close" in low and "edge" in low:
+            return [{"tool": "desktop_close", "args": {"app": "msedge"}}]
+        if "close" in low and "app" in low:
+            # Try to close by extracting app name from context
+            words = low.split()
+            if len(words) >= 2:
+                app = words[-1]
+                return [{"tool": "desktop_close", "args": {"app": app}}]
+        if "create" in low and "file" in low:
+            return [{"tool": "write_file", "args": {"path": ".temp", "content": ""}}]
+        if "write" in low and "file" in low:
+            return [{"tool": "write_file", "args": {"path": ".temp", "content": ""}}]
+        if "read" in low and "file" in low:
+            return [{"tool": "read_file", "args": {"path": "."}}]
         if "git" in low and "status" in low:
             return [{"tool": "git_status", "args": {}}]
         if "git" in low and "log" in low:
             return [{"tool": "git_log", "args": {}}]
+        if "git" in low and "commit" in low:
+            return [{"tool": "git_commit", "args": {"message": "auto-commit"}}]
         if "git" in low and "push" in low:
             return [{"tool": "git_push", "args": {}}]
         if "docker" in low and any(w in low for w in ("ps", "container", "running")):
             return [{"tool": "docker_ps", "args": {}}]
         if "docker" in low and "image" in low:
             return [{"tool": "docker_images", "args": {}}]
+        if "docker" in low and "logs" in low:
+            return [{"tool": "docker_logs", "args": {"container": ""}}]
+        if "docker" in low and "compose" in low and "up" in low:
+            return [{"tool": "compose_up", "args": {"directory": "."}}]
+        if "docker" in low and "compose" in low and "down" in low:
+            return [{"tool": "compose_down", "args": {"directory": "."}}]
         if "system" in low and "check" in low:
-            return [{"tool": "system_info", "args": {}}]
+            return [{"tool": "run_command", "args": {"command": "systeminfo"}}]
         if "check" in low and "system" in low:
-            return [{"tool": "system_info", "args": {}}]
+            return [{"tool": "run_command", "args": {"command": "systeminfo"}}]
+        if "check" in low and "status" in low:
+            return [{"tool": "run_command", "args": {"command": "systeminfo"}}]
+        if "open" in low and "http" in low or "https" in low or "www" in low:
+            # Extract URL from message
+            words = low.split()
+            for word in words:
+                if word.startswith("http") or word.startswith("www"):
+                    return [{"tool": "browser_open", "args": {"url": word}}]
+        if "open" in low and "website" in low:
+            # Try to extract URL from context
+            words = low.split()
+            for word in words:
+                if word.startswith("http") or word.startswith("www"):
+                    return [{"tool": "browser_open", "args": {"url": word}}]
+        if "fetch" in low and "page" in low:
+            words = low.split()
+            for word in words:
+                if word.startswith("http") or word.startswith("www"):
+                    return [{"tool": "fetch_page", "args": {"url": word}}]
         for prefix in ("search the web for ", "web search for ", "search for ", "search the web "):
             if low.startswith(prefix):
                 return [{"tool": "web_search", "args": {"query": message[len(prefix):].strip() or message}}]
         if "web" in low and "search" in low:
             return [{"tool": "web_search", "args": {"query": message}}]
+        if "notify" in low or "notification" in low:
+            return [{"tool": "desktop_notify", "args": {"title": "Emma", "message": "Task completed"}}]
         return []
 
     # ---------------------------------------------------------------- execution

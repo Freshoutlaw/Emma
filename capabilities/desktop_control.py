@@ -109,3 +109,39 @@ class DesktopControl:
         import pyautogui
 
         await asyncio.to_thread(pyautogui.moveTo, x, y)
+
+    async def open_app(self, app: str) -> dict:
+        """Open an application by name (Windows/macOS/Linux)."""
+        self.guardian.guard("desktop_control", {"action": "open_app", "app": app})
+        system = platform.system().lower()
+        
+        if system == "windows":
+            cmd = ["powershell", "-Command", f"Start-Process '{app}'"]
+        elif system == "darwin":
+            cmd = ["open", "-a", app]
+        elif system == "linux":
+            cmd = ["xdg-open", app]
+        else:
+            return {"success": False, "reason": f"unsupported platform: {system}"}
+        
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        await proc.wait()
+        return {"success": proc.returncode == 0, "platform": system}
+
+    async def close_app(self, app: str) -> dict:
+        """Close an application by name (Windows/macOS/Linux)."""
+        self.guardian.guard("desktop_control", {"action": "close_app", "app": app})
+        system = platform.system().lower()
+        
+        if system == "windows":
+            cmd = ["powershell", "-Command", f"Get-Process '{app}' | Stop-Process -Force"]
+        elif system == "darwin":
+            cmd = ["pkill", "-x", app]
+        elif system == "linux":
+            cmd = ["pkill", "-x", app]
+        else:
+            return {"success": False, "reason": f"unsupported platform: {system}"}
+        
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        await proc.wait()
+        return {"success": proc.returncode == 0, "platform": system}
