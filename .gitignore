@@ -37,3 +37,4 @@ infrastructure/wheels/*.whl
 
 # Temporary files
 tmp/
+.freebuff/
