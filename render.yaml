@@ -42,7 +42,7 @@ services:
       - key: EMMA_EMBEDDING_MODEL
         value: nomic-embed-text
       - key: EMMA_EMBEDDING_DIM
-        value: 384
+        value: 768
       - key: EMMA_TTS_VOICE
         value: en-US-JennyNeural
       - key: EMMA_VOICE_VAD_THRESHOLD

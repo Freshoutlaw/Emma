@@ -40,25 +40,10 @@ COPY flags/ flags/
 
 RUN mkdir -p /app/data
 
-# Create startup script to run Ollama and Emma together
-RUN echo '#!/bin/bash\n\
-# Start Ollama in background (needed to proxy to Ollama Cloud)\n\
-ollama serve &\n\
-# Wait for Ollama to be ready\n\
-echo "Waiting for Ollama to start..."\n\
-for i in {1..30}; do\n\
-  if curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then\n\
-    echo "Ollama is ready!"\n\
-    break\n\
-  fi\n\
-  echo "Waiting for Ollama... ($i/30)"\n\
-  sleep 2\n\
-done\n\
-# NO local model pull - using Ollama Cloud (gemma4:31b-cloud)\n\
-echo "Using Ollama Cloud model - no local model pull needed"\n\
-# Start Emma\n\
-exec uvicorn backend.main:app --host 0.0.0.0 --port $PORT\n\
-' > /app/start.sh && chmod +x /app/start.sh
+# Startup script: starts Ollama, exports the Ollama Cloud API key, pre-pulls
+# the fallback + embedding models, and fails fast if Ollama isn't ready
+COPY infrastructure/start.sh /app/start.sh
+RUN chmod +x /app/start.sh
 
 EXPOSE 8000 11434
 
